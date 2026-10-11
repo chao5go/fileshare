@@ -6,35 +6,44 @@
 // 网页界面（UI_* 常量）与 Python 版共用，改动后运行 node scripts/sync-ui.js 同步。
 
 const http = require('http');
+const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-const VERSION = '1.1.1';
+const VERSION = '1.2.0';
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
   console.log(`remote-fileshare ${VERSION} — 远程文件共享
 
-用法：remote-fileshare [共享目录]
+用法：remote-fileshare [共享目录] [--https]
+
+  --https   自动获取外网 IP，并通过 Caddy 自动申请、续期证书，提供 https://外网IP:端口
+            需要已安装 Caddy 2.10+，并放行 80 端口（申请证书用）和监听端口
 
 环境变量：
-  PORT      监听端口（默认 8001）
+  PORT      监听端口（默认 8001；--https 时为 HTTPS 端口）
   HOST      监听地址（默认 0.0.0.0）
   FS_USER   登录用户名（默认 admin）
   PASS      登录密码（不设置则首次运行随机生成，并保存到密码文件）
   PASS_FILE 密码文件路径（默认 ~/.config/remote-fileshare/password）
-  TRUST_PROXY=1  放在本机反向代理（Caddy/Nginx）后面时设置，从 X-Forwarded-For 读取真实客户端 IP`);
+  TRUST_PROXY=1  放在本机反向代理（Caddy/Nginx）后面时设置，从 X-Forwarded-For 读取真实客户端 IP
+  PUBLIC_HOST    外网地址（IP 或域名），不设置则自动获取外网 IP
+  CADDY          Caddy 可执行文件路径（默认在 PATH 里找 caddy）`);
   process.exit(0);
 }
 if (process.argv.includes('-v') || process.argv.includes('--version')) { console.log(VERSION); process.exit(0); }
 
+const HTTPS = process.argv.includes('--https');
 const USERNAME = process.env.FS_USER || 'admin';
 const PORT = Number(process.env.PORT) || 8001;
-const HOST = process.env.HOST || '0.0.0.0';
-const TRUST_PROXY = process.env.TRUST_PROXY === '1';
-const PASS_FILE = process.env.PASS_FILE || path.join(os.homedir(), '.config', 'remote-fileshare', 'password');
+// --https 时本程序只监听本机随机端口，由 Caddy 对外提供 HTTPS 并转发过来。
+const HOST = HTTPS ? '127.0.0.1' : process.env.HOST || '0.0.0.0';
+const TRUST_PROXY = HTTPS || process.env.TRUST_PROXY === '1';
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'remote-fileshare');
+const PASS_FILE = process.env.PASS_FILE || path.join(CONFIG_DIR, 'password');
 const ROOT = fs.realpathSync(path.resolve(process.argv.slice(2).find(a => !a.startsWith('-')) || '.'));
 
 let passwordGenerated = false;
@@ -483,17 +492,110 @@ const server = http.createServer((req, res) => {
 // 境外服务器上传大文件可能要几十分钟，关闭 Node 默认的 5 分钟请求超时。
 server.requestTimeout = 0;
 server.headersTimeout = 60 * 1000;
-server.listen(PORT, HOST, () => {
-  console.log(`remote-fileshare ${VERSION} 已启动：http://${HOST}:${PORT}`);
-  if (HOST === '0.0.0.0' || HOST === '::') {
-    const ips = Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
-    for (const ip of ['127.0.0.1', ...ips]) console.log(`访问地址：http://${ip}:${PORT}`);
-  }
+function printCredentials() {
   console.log(`共享目录：${ROOT}`);
   console.log(`用户名：${USERNAME}`);
   if (process.env.PASS) console.log('密码：来自环境变量 PASS');
   else if (passwordGenerated) console.log(`密码：${PASSWORD}（已随机生成并保存到 ${PASS_FILE}）`);
   else console.log(`密码：保存在 ${PASS_FILE}`);
   if (ROOT === path.parse(ROOT).root) console.warn('警告：共享根目录是整个文件系统，任何登录的人都能读写所有文件。');
+}
+
+// 依次询问几个公共服务，拿到本机的外网 IP。PUBLIC_HOST 可以直接指定（IP 或域名）。
+const IP_SERVICES = ['https://api.ipify.org', 'https://ifconfig.me/ip', 'https://ipv4.icanhazip.com'];
+async function publicHost() {
+  if (process.env.PUBLIC_HOST) return process.env.PUBLIC_HOST;
+  for (const url of IP_SERVICES) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': 'curl/8' } });
+      const ip = (await r.text()).trim();
+      if (r.ok && net.isIP(ip)) return ip;
+    } catch {}
+  }
+  return null;
+}
+
+function hostPort(host, port) {
+  return `${net.isIP(host) === 6 ? `[${host}]` : host}:${port}`;
+}
+
+// Caddy 配置：对外 HTTPS，误用 http:// 访问时自动跳转；IP 地址使用 Let's Encrypt 的短期 IP 证书（约 6 天，自动续期）。
+function caddyfile(host, port, backend) {
+  const ipCert = net.isIP(host) ? '\n\ttls {\n\t\tissuer acme {\n\t\t\tdir https://acme-v02.api.letsencrypt.org/directory\n\t\t\tprofile shortlived\n\t\t}\n\t}' : '';
+  return `# 由 remote-fileshare --https 自动生成，每次启动都会覆盖。
+{
+\tadmin off
+\tservers :${port} {
+\t\tlistener_wrappers {
+\t\t\thttp_redirect
+\t\t\ttls
+\t\t}
+\t}
+}
+
+${hostPort(host, port)} {${ipCert}
+\treverse_proxy 127.0.0.1:${backend}
+}
+`;
+}
+
+async function startHttps(backend) {
+  const host = await publicHost();
+  if (!host) {
+    console.error('无法自动获取外网 IP，请用环境变量 PUBLIC_HOST 指定外网 IP 或域名。');
+    process.exit(1);
+  }
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  const config = path.join(CONFIG_DIR, 'Caddyfile');
+  fs.writeFileSync(config, caddyfile(host, PORT, backend));
+  const caddy = spawn(process.env.CADDY || 'caddy', ['run', '--config', config, '--adapter', 'caddyfile'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  caddy.on('error', err => {
+    if (err.code === 'ENOENT') {
+      console.error('--https 需要 Caddy 2.10 以上版本，请先安装：https://caddyserver.com/docs/install');
+      console.error('  Debian/Ubuntu：参考上面链接添加官方源后 apt install caddy；macOS：brew install caddy');
+    } else console.error('无法启动 Caddy：' + err.message);
+    process.exit(1);
+  });
+  caddy.on('exit', code => {
+    console.error(`Caddy 已退出（退出码 ${code}），HTTPS 不可用。`);
+    process.exit(1);
+  });
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { caddy.kill(); server.close(); process.exit(0); });
+  process.on('exit', () => { if (caddy.exitCode === null) caddy.kill(); });
+  // Caddy 的日志是 JSON，只挑出证书和错误相关的告诉用户。
+  let buffered = '';
+  caddy.stderr.on('data', chunk => {
+    buffered += chunk;
+    const lines = buffered.split('\n');
+    buffered = lines.pop();
+    for (const line of lines) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { if (line.trim()) console.error('Caddy：' + line.trim()); continue; }
+      if (/certificate obtained successfully/.test(entry.msg)) console.log(`HTTPS 证书已就绪：https://${hostPort(host, PORT)}`);
+      else if (entry.level === 'error' || entry.level === 'fatal') console.error(`Caddy：${entry.msg}${entry.error ? ' · ' + entry.error : ''}`);
+    }
+  });
+  console.log(`访问地址：https://${hostPort(host, PORT)}`);
+  console.log(`HTTPS 由 Caddy 提供，配置文件：${config}`);
+  console.log('首次启动会申请证书，需要放行 80 端口（申请证书用）和 ' + PORT + ' 端口。');
+}
+
+server.listen(HTTPS ? 0 : PORT, HOST, () => {
+  if (HTTPS) {
+    console.log(`remote-fileshare ${VERSION} 已启动（HTTPS 模式，本机端口 ${server.address().port}）`);
+    printCredentials();
+    return startHttps(server.address().port);
+  }
+  console.log(`remote-fileshare ${VERSION} 已启动：http://${HOST}:${PORT}`);
+  if (HOST === '0.0.0.0' || HOST === '::') {
+    const ips = Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
+    for (const ip of ['127.0.0.1', ...ips]) console.log(`访问地址：http://${ip}:${PORT}`);
+  }
+  printCredentials();
+  if (HOST !== '127.0.0.1' && HOST !== '::1' && HOST !== 'localhost') {
+    publicHost().then(host => {
+      if (host) console.log(`外网访问：http://${hostPort(host, PORT)}（需要在防火墙 / 安全组放行 ${PORT} 端口；加 --https 可自动启用 HTTPS）`);
+    });
+  }
 });
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { server.close(); process.exit(0); });
+if (!HTTPS) for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { server.close(); process.exit(0); });

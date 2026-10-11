@@ -16,11 +16,13 @@ import shutil
 import signal
 import socket
 import stat as statmod
+import subprocess
 import sys
 import tarfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from email.utils import formatdate
@@ -30,15 +32,20 @@ from . import __version__, ui
 
 HELP = """remote-fileshare {version} — 远程文件共享
 
-用法：remote-fileshare [共享目录]
+用法：remote-fileshare [共享目录] [--https]
+
+  --https   自动获取外网 IP，并通过 Caddy 自动申请、续期证书，提供 https://外网IP:端口
+            需要已安装 Caddy 2.10+，并放行 80 端口（申请证书用）和监听端口
 
 环境变量：
-  PORT      监听端口（默认 8001）
+  PORT      监听端口（默认 8001；--https 时为 HTTPS 端口）
   HOST      监听地址（默认 0.0.0.0）
   FS_USER   登录用户名（默认 admin）
   PASS      登录密码（不设置则首次运行随机生成，并保存到密码文件）
   PASS_FILE 密码文件路径（默认 ~/.config/remote-fileshare/password）
-  TRUST_PROXY=1  放在本机反向代理（Caddy/Nginx）后面时设置，从 X-Forwarded-For 读取真实客户端 IP"""
+  TRUST_PROXY=1  放在本机反向代理（Caddy/Nginx）后面时设置，从 X-Forwarded-For 读取真实客户端 IP
+  PUBLIC_HOST    外网地址（IP 或域名），不设置则自动获取外网 IP
+  CADDY          Caddy 可执行文件路径（默认在 PATH 里找 caddy）"""
 
 UPLOAD_TMP = re.compile(r"^\..+\.[0-9a-f]{16}\.upload$")
 CHUNK = 256 * 1024
@@ -63,14 +70,17 @@ def sha256(value):
 class Config:
     def __init__(self):
         args = [a for a in sys.argv[1:] if not a.startswith("-")]
+        self.https = "--https" in sys.argv
         self.user = os.environ.get("FS_USER") or "admin"
         try:
             self.port = int(os.environ.get("PORT") or 8001) or 8001
         except ValueError:
             self.port = 8001
-        self.host = os.environ.get("HOST") or "0.0.0.0"
-        self.trust_proxy = os.environ.get("TRUST_PROXY") == "1"
-        self.pass_file = os.environ.get("PASS_FILE") or os.path.join(os.path.expanduser("~"), ".config", "remote-fileshare", "password")
+        # --https 时本程序只监听本机随机端口，由 Caddy 对外提供 HTTPS 并转发过来。
+        self.host = "127.0.0.1" if self.https else os.environ.get("HOST") or "0.0.0.0"
+        self.trust_proxy = self.https or os.environ.get("TRUST_PROXY") == "1"
+        self.config_dir = os.path.join(os.path.expanduser("~"), ".config", "remote-fileshare")
+        self.pass_file = os.environ.get("PASS_FILE") or os.path.join(self.config_dir, "password")
         root = os.path.abspath(args[0] if args else ".")
         if not os.path.isdir(root):
             sys.exit(f"共享目录不存在：{root}")
@@ -670,24 +680,91 @@ def local_addresses():
     return found
 
 
-def main():
-    if "-h" in sys.argv or "--help" in sys.argv:
-        print(HELP.format(version=__version__))
-        return
-    if "-v" in sys.argv or "--version" in sys.argv:
-        print(__version__)
-        return
-    cfg = Config()
-    Server.address_family = socket.AF_INET6 if ":" in cfg.host else socket.AF_INET
+def is_ip(value):
     try:
-        httpd = Server((cfg.host, cfg.port), Handler)
-    except OSError as err:
-        sys.exit(f"无法监听 {cfg.host}:{cfg.port}：{err}")
-    httpd.cfg = cfg
-    print(f"remote-fileshare {__version__} 已启动：http://{cfg.host}:{cfg.port}", flush=True)
-    if cfg.host in ("0.0.0.0", "::"):
-        for ip in ["127.0.0.1"] + local_addresses():
-            print(f"访问地址：http://{ip}:{cfg.port}", flush=True)
+        socket.inet_pton(socket.AF_INET6 if ":" in value else socket.AF_INET, value)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+# 依次询问几个公共服务，拿到本机的外网 IP。PUBLIC_HOST 可以直接指定（IP 或域名）。
+IP_SERVICES = ["https://api.ipify.org", "https://ifconfig.me/ip", "https://ipv4.icanhazip.com"]
+
+
+def public_host():
+    if os.environ.get("PUBLIC_HOST"):
+        return os.environ["PUBLIC_HOST"]
+    for url in IP_SERVICES:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/8"})
+            with urllib.request.urlopen(req, timeout=4) as r:
+                ip = r.read().decode().strip()
+            if is_ip(ip):
+                return ip
+        except Exception:  # noqa: BLE001 换下一个服务
+            continue
+    return None
+
+
+def host_port(host, port):
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+# Caddy 配置：对外 HTTPS，误用 http:// 访问时自动跳转；IP 地址使用 Let's Encrypt 的短期 IP 证书（约 6 天，自动续期）。
+def caddyfile(host, port, backend):
+    ip_cert = "\n\ttls {\n\t\tissuer acme {\n\t\t\tdir https://acme-v02.api.letsencrypt.org/directory\n\t\t\tprofile shortlived\n\t\t}\n\t}" if is_ip(host) else ""
+    return (
+        "# 由 remote-fileshare --https 自动生成，每次启动都会覆盖。\n"
+        "{\n\tadmin off\n"
+        f"\tservers :{port} {{\n\t\tlistener_wrappers {{\n\t\t\thttp_redirect\n\t\t\ttls\n\t\t}}\n\t}}\n}}\n\n"
+        f"{host_port(host, port)} {{{ip_cert}\n\treverse_proxy 127.0.0.1:{backend}\n}}\n"
+    )
+
+
+def start_https(cfg, backend):
+    host = public_host()
+    if not host:
+        sys.exit("无法自动获取外网 IP，请用环境变量 PUBLIC_HOST 指定外网 IP 或域名。")
+    os.makedirs(cfg.config_dir, mode=0o700, exist_ok=True)
+    config = os.path.join(cfg.config_dir, "Caddyfile")
+    with open(config, "w", encoding="utf-8") as f:
+        f.write(caddyfile(host, cfg.port, backend))
+    try:
+        caddy = subprocess.Popen([os.environ.get("CADDY") or "caddy", "run", "--config", config, "--adapter", "caddyfile"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        print("--https 需要 Caddy 2.10 以上版本，请先安装：https://caddyserver.com/docs/install", file=sys.stderr)
+        print("  Debian/Ubuntu：参考上面链接添加官方源后 apt install caddy；macOS：brew install caddy", file=sys.stderr)
+        sys.exit(1)
+
+    # Caddy 的日志是 JSON，只挑出证书和错误相关的告诉用户；Caddy 退出则整个程序退出。
+    def watch():
+        for raw in caddy.stderr:
+            line = raw.decode("utf-8", "replace").strip()
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                if line:
+                    print("Caddy：" + line, file=sys.stderr, flush=True)
+                continue
+            if "certificate obtained successfully" in str(entry.get("msg")):
+                print(f"HTTPS 证书已就绪：https://{host_port(host, cfg.port)}", flush=True)
+            elif entry.get("level") in ("error", "fatal"):
+                detail = f" · {entry['error']}" if entry.get("error") else ""
+                print(f"Caddy：{entry.get('msg')}{detail}", file=sys.stderr, flush=True)
+        caddy.wait()
+        print(f"Caddy 已退出（退出码 {caddy.returncode}），HTTPS 不可用。", file=sys.stderr, flush=True)
+        os._exit(1)
+
+    threading.Thread(target=watch, daemon=True).start()
+    print(f"访问地址：https://{host_port(host, cfg.port)}")
+    print(f"HTTPS 由 Caddy 提供，配置文件：{config}")
+    print(f"首次启动会申请证书，需要放行 80 端口（申请证书用）和 {cfg.port} 端口。", flush=True)
+    return caddy
+
+
+def print_credentials(cfg):
     print(f"共享目录：{cfg.root}")
     print(f"用户名：{cfg.user}")
     if os.environ.get("PASS"):
@@ -699,12 +776,48 @@ def main():
     if cfg.root == os.path.abspath(os.sep):
         print("警告：共享根目录是整个文件系统，任何登录的人都能读写所有文件。", file=sys.stderr)
     sys.stdout.flush()
+
+
+def main():
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print(HELP.format(version=__version__))
+        return
+    if "-v" in sys.argv or "--version" in sys.argv:
+        print(__version__)
+        return
+    cfg = Config()
+    Server.address_family = socket.AF_INET6 if ":" in cfg.host else socket.AF_INET
+    try:
+        httpd = Server((cfg.host, 0 if cfg.https else cfg.port), Handler)
+    except OSError as err:
+        sys.exit(f"无法监听 {cfg.host}:{cfg.port}：{err}")
+    httpd.cfg = cfg
+    caddy = None
+    if cfg.https:
+        backend = httpd.server_address[1]
+        print(f"remote-fileshare {__version__} 已启动（HTTPS 模式，本机端口 {backend}）", flush=True)
+        print_credentials(cfg)
+        caddy = start_https(cfg, backend)
+    else:
+        print(f"remote-fileshare {__version__} 已启动：http://{cfg.host}:{cfg.port}", flush=True)
+        if cfg.host in ("0.0.0.0", "::"):
+            for ip in ["127.0.0.1"] + local_addresses():
+                print(f"访问地址：http://{ip}:{cfg.port}", flush=True)
+        print_credentials(cfg)
+        if cfg.host not in ("127.0.0.1", "::1", "localhost"):
+            def announce():
+                host = public_host()
+                if host:
+                    print(f"外网访问：http://{host_port(host, cfg.port)}（需要在防火墙 / 安全组放行 {cfg.port} 端口；加 --https 可自动启用 HTTPS）", flush=True)
+            threading.Thread(target=announce, daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         httpd.serve_forever()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
+        if caddy and caddy.poll() is None:
+            caddy.terminate()
         httpd.server_close()
 
 

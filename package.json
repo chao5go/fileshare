@@ -1,6 +1,6 @@
 {
   "name": "remote-fileshare",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Remote file sharing between your browser and a server: upload, download, preview, folder tar.gz, resumable. One command, zero dependencies, built for remote AI agents. 远程文件共享：一行 npx / uvx 启动，在浏览器和远程服务器之间上传、下载、预览、打包文件；带密码、断点续传、零依赖，专为远程 AI agent 设计",
   "main": "remote-fileshare.js",
   "bin": {

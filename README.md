@@ -23,18 +23,29 @@ uvx remote-fileshare /path/to/share        # Python 3.8+，用 uv
 pipx run remote-fileshare /path/to/share   # Python 3.8+，用 pipx
 ```
 
-不传目录时共享当前目录，默认端口 8001。启动后终端会打印访问地址、用户名和密码：
+不传目录时共享当前目录，默认端口 8001。启动后会自动查到服务器的外网 IP，连同用户名、密码一起打印出来：
 
 ```
-remote-fileshare 1.1.1 已启动：http://0.0.0.0:8001
-访问地址：http://127.0.0.1:8001
-访问地址：http://10.0.0.5:8001
+remote-fileshare 已启动：http://0.0.0.0:8001
 共享目录：/path/to/share
 用户名：admin
 密码：fRu_aghQlXQ6cJ1bOpWiw-Te（已随机生成并保存到 ~/.config/remote-fileshare/password）
+外网访问：http://203.0.113.10:8001（需要在防火墙 / 安全组放行 8001 端口；加 --https 可自动启用 HTTPS）
 ```
 
-然后在**本地电脑**的浏览器打开 `http://服务器公网IP:8001` 即可。查看服务器公网 IP：`curl -s ifconfig.me`。
+在**本地电脑**的浏览器打开「外网访问」那个地址即可。
+
+### 一键 HTTPS
+
+加上 `--https`，自动获取外网 IP，并自动申请、续期 HTTPS 证书，**不需要域名**：
+
+```bash
+npx remote-fileshare /path/to/share --https
+# 访问地址：https://203.0.113.10:8001
+# HTTPS 证书已就绪：https://203.0.113.10:8001
+```
+
+需要两样东西：机器上装有 [Caddy](https://caddyserver.com/docs/install) 2.10 以上版本（程序会自动调用它，没装时会提示），以及放行 **80 端口**（申请证书用）和 8001 端口。证书是 Let's Encrypt 签给 IP 的，有效期约 6 天，Caddy 会自动续期。有域名的话用 `PUBLIC_HOST=你的域名` 指定即可。
 
 <details>
 <summary>其他安装方式</summary>
@@ -88,17 +99,19 @@ pkill -f remote-fileshare   # 停止
 | `PASS` | 随机生成 | 登录密码，设置后不再读写密码文件 |
 | `PASS_FILE` | `~/.config/remote-fileshare/password` | 自动生成的密码保存位置；改密码可以直接编辑它后重启 |
 | `TRUST_PROXY` | 不开启 | 放在本机反向代理后面时设为 `1`，从 `X-Forwarded-For` 读取真实客户端 IP（用于登录限流和日志） |
+| `PUBLIC_HOST` | 自动获取 | 外网地址（IP 或域名），用于打印访问地址和 `--https` 申请证书 |
+| `CADDY` | `caddy` | `--https` 时使用的 Caddy 可执行文件路径 |
 
 ```bash
 PORT=9000 PASS='一个足够长的密码' npx remote-fileshare ~/share
 ```
 
-### HTTPS
+### 自己配置反向代理
 
-remote-fileshare 本身只提供 HTTP，以保持零依赖。需要 HTTPS 时，在前面放一个 [Caddy](https://caddyserver.com)，证书会自动申请和续期：
+`--https` 适合一台机器只跑这一个服务。如果机器上已经有 Caddy / Nginx 在用 80、443 端口，就让 remote-fileshare 只监听本机，交给现有的反向代理：
 
 ```bash
-HOST=127.0.0.1 TRUST_PROXY=1 npx remote-fileshare /path/to/share   # 只监听本机，不直接暴露
+HOST=127.0.0.1 TRUST_PROXY=1 npx remote-fileshare /path/to/share
 ```
 
 Caddy 配置见 [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile)。有域名时只需要两行配置。**没有域名也可以**：Let's Encrypt 支持直接给公网 IP 签证书（需要 Caddy 2.10 以上版本），访问地址就是 `https://你的IP`，也可以带端口，例如 `https://你的IP:8001`。两种方式都需要放行 80 端口，证书申请和续期要用它。
@@ -139,12 +152,12 @@ curl -u "$U" -X DELETE "$S/a.txt"                                          # 删
 
 - 这个服务能读写共享目录里的**所有文件**，请使用足够长的随机密码（默认生成的就是）。
 - 不要把共享目录设成 `/`，尤其是在公网服务器上。
-- 直接用 HTTP 时，密码和文件在网络上都是明文传输。公网使用强烈建议按上文加 HTTPS，或者通过 SSH 隧道访问：`ssh -L 8001:127.0.0.1:8001 服务器`，然后打开 `http://127.0.0.1:8001`。
+- 直接用 HTTP 时，密码和文件在网络上都是明文传输。公网使用强烈建议加 `--https`，或者通过 SSH 隧道访问：`ssh -L 8001:127.0.0.1:8001 服务器`，然后打开 `http://127.0.0.1:8001`。
 - 已经做了的防护：路径穿越与符号链接越界校验、禁止删除共享根目录、文件名 HTML 转义、拒绝跨站写请求（CSRF）、预览内容放进 CSP 沙箱、登录失败限流。
 
 ## 常见问题
 
-**打不开网页？** 没配 HTTPS 时，先检查地址栏：浏览器经常自动把 http 改成 https，必须完整输入 `http://IP:8001`。再检查云服务器的安全组 / 防火墙有没有放行 8001 端口。还打不开就用手机流量试一下，能打开说明是你所在的网络拦截了。
+**打不开网页？** 没加 `--https` 时，先检查地址栏：浏览器经常自动把 http 改成 https，必须完整输入 `http://IP:8001`。再检查云服务器的安全组 / 防火墙有没有放行 8001 端口。还打不开就用手机流量试一下，能打开说明是你所在的网络拦截了。
 
 **传到一半断了？** 网页上传是逐个文件进行的，已经传完的文件不受影响，重新选择剩下的文件继续即可。下载中断可以用浏览器的「继续」或 `curl -C -` 续传。
 
@@ -193,7 +206,7 @@ uvx remote-fileshare /path/to/share     # Python 3.8+
 - Upload files, whole folders or drag-and-drop, with progress, speed and ETA. There is no request timeout.
 - Download with resume support. Folders stream as `.tar.gz`. Images, PDFs, media and code can be previewed in a sandbox.
 - Copy any file's absolute server path in one click to paste to your agent.
-- HTTPS works by putting Caddy in front, even without a domain (Let's Encrypt IP certificates). See [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile).
+- `--https` detects the public IP and gets a Let's Encrypt IP certificate through Caddy, so no domain is needed. For a manual setup, see [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile).
 
 The UI is in Chinese. Configuration uses the environment variables listed above.
 

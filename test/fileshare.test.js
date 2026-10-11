@@ -21,17 +21,22 @@ function startServer(dir, env) {
   return startServerImpl(IMPL, dir, env);
 }
 
-function startServerImpl(impl, dir, env) {
+function startServerImpl(impl, dir, env, extraArgs = [], stderr = 'inherit') {
   const [cmd, args, extra] = impl === 'python'
-    ? [PYTHON, ['-m', 'remote_fileshare', dir], { PYTHONPATH: path.join(__dirname, '..', 'src'), PYTHONUNBUFFERED: '1' }]
-    : [process.execPath, [path.join(__dirname, '..', 'remote-fileshare.js'), dir], {}];
-  const child = spawn(cmd, args, { env: { ...process.env, ...extra, ...env }, stdio: ['ignore', 'pipe', 'inherit'] });
+    ? [PYTHON, ['-m', 'remote_fileshare', dir, ...extraArgs], { PYTHONPATH: path.join(__dirname, '..', 'src'), PYTHONUNBUFFERED: '1' }]
+    : [process.execPath, [path.join(__dirname, '..', 'remote-fileshare.js'), dir, ...extraArgs], {}];
+  const child = spawn(cmd, args, { env: { ...process.env, ...extra, ...env }, stdio: ['ignore', 'pipe', stderr] });
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
   const ready = new Promise((resolve, reject) => {
-    let out = '';
-    child.stdout.on('data', d => { out += d; if (out.includes('已启动')) resolve(); });
+    child.stdout.on('data', () => { if (out.includes('已启动')) resolve(); });
     child.on('exit', code => reject(new Error('server exited ' + code)));
   });
-  return { child, ready };
+  const waitFor = async text => {
+    for (let i = 0; i < 200 && !out.includes(text); i++) await new Promise(r => setTimeout(r, 25));
+    assert.ok(out.includes(text), `输出里没有「${text}」：\n${out}`);
+  };
+  return { child, ready, output: () => out, waitFor };
 }
 
 function freePort() {
@@ -241,6 +246,66 @@ test('版本号一致', () => {
 
 test('ui.py 与 Node 版界面同步', () => {
   execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'sync-ui.js'), '--check']);
+});
+
+
+test('--https：自动生成 Caddy 配置、启动 Caddy、报告证书就绪，退出时关闭 Caddy', async () => {
+  const home = fs.mkdtempSync(path.join(tmp, 'home-'));
+  const fake = path.join(home, 'fake-caddy');
+  // 假的 Caddy：记录启动参数和 pid，打印一行证书成功的 JSON 日志，然后一直运行。
+  fs.writeFileSync(fake, `#!${process.execPath}
+require('fs').writeFileSync(${JSON.stringify(path.join(home, 'caddy-args.json'))}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid }));
+process.stderr.write(JSON.stringify({ level: 'info', msg: 'certificate obtained successfully', identifier: '203.0.113.7' }) + '\\n');
+process.stderr.write(JSON.stringify({ level: 'error', msg: 'could not get certificate', error: 'port 80 blocked' }) + '\\n');
+setInterval(() => {}, 1000);
+`, { mode: 0o755 });
+  const { child, ready, waitFor } = startServerImpl(IMPL, root, { PASS, PORT: '4443', HOME: home, PUBLIC_HOST: '203.0.113.7', CADDY: fake }, ['--https'], 'pipe');
+  let stderr = '';
+  child.stderr.on('data', d => { stderr += d; });
+  try {
+    await ready;
+    await waitFor('访问地址：https://203.0.113.7:4443');
+    await waitFor('HTTPS 证书已就绪：https://203.0.113.7:4443');
+    for (let i = 0; i < 100 && !stderr.includes('port 80 blocked'); i++) await new Promise(r => setTimeout(r, 25));
+    assert.match(stderr, /Caddy：could not get certificate · port 80 blocked/);
+
+    const { args, pid } = JSON.parse(fs.readFileSync(path.join(home, 'caddy-args.json'), 'utf8'));
+    const config = path.join(home, '.config', 'remote-fileshare', 'Caddyfile');
+    assert.deepEqual(args, ['run', '--config', config, '--adapter', 'caddyfile']);
+    const caddyfile = fs.readFileSync(config, 'utf8');
+    assert.match(caddyfile, /^203\.0\.113\.7:4443 \{$/m);
+    assert.match(caddyfile, /profile shortlived/);
+    assert.match(caddyfile, /admin off/);
+    assert.match(caddyfile, /http_redirect/);
+    const backend = Number(/reverse_proxy 127\.0\.0\.1:(\d+)/.exec(caddyfile)[1]);
+
+    // 后端只监听本机，并且信任本机代理传来的真实 IP。
+    const res = await fetch(`http://127.0.0.1:${backend}/`, { headers: { authorization: auth, 'x-forwarded-for': '198.51.100.20' } });
+    assert.equal(res.status, 200);
+
+    child.kill('SIGTERM');
+    await new Promise(r => child.once('exit', r));
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) {
+      try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 25)); } catch { alive = false; }
+    }
+    assert.equal(alive, false, '退出后 Caddy 应该被关闭');
+  } finally {
+    child.kill('SIGKILL');
+  }
+});
+
+test('--https：域名不使用 IP 证书配置；没装 Caddy 时给出安装提示并退出', async () => {
+  const home = fs.mkdtempSync(path.join(tmp, 'home-'));
+  const { child } = startServerImpl(IMPL, root, { PASS, PORT: '4444', HOME: home, PUBLIC_HOST: 'share.example.com', CADDY: path.join(home, 'no-such-caddy') }, ['--https'], 'pipe');
+  let stderr = '';
+  child.stderr.on('data', d => { stderr += d; });
+  const code = await new Promise(r => child.once('exit', r));
+  assert.equal(code, 1);
+  assert.match(stderr, /需要 Caddy 2\.10 以上版本/);
+  const caddyfile = fs.readFileSync(path.join(home, '.config', 'remote-fileshare', 'Caddyfile'), 'utf8');
+  assert.match(caddyfile, /^share\.example\.com:4444 \{$/m);
+  assert.doesNotMatch(caddyfile, /shortlived/);
 });
 
 // 放在最后：会把 127.0.0.1 锁定，之后对主服务器的请求都会返回 429。
