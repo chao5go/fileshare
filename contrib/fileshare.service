@@ -14,6 +14,9 @@ Wants=network-online.target
 User=root
 ExecStart=/usr/bin/node /opt/fileshare/fileshare.js /root/share
 Environment=PORT=8001
+# 放在 Caddy 等反向代理后面时，打开下面两行（见 contrib/Caddyfile）
+# Environment=HOST=127.0.0.1
+# Environment=TRUST_PROXY=1
 # 不设置 PASS 时，密码随机生成并保存在该用户的 ~/.config/fileshare/password
 # Environment=PASS=change-me
 Restart=on-failure
