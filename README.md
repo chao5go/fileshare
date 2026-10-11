@@ -22,7 +22,7 @@
 
 ```bash
 # 下载（也可以 git clone 整个仓库）
-curl -fsSLO https://raw.githubusercontent.com/<你的用户名>/fileshare/main/fileshare.js
+curl -fsSLO https://raw.githubusercontent.com/chao5go/fileshare/main/fileshare.js
 
 # 在要共享的目录里启动（默认共享当前目录，端口 8001）
 node fileshare.js /path/to/share
