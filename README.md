@@ -1,12 +1,17 @@
 # remote-fileshare · 远程文件共享
 
+[![npm](https://img.shields.io/npm/v/remote-fileshare?logo=npm)](https://www.npmjs.com/package/remote-fileshare)
+[![PyPI](https://img.shields.io/pypi/v/remote-fileshare?logo=pypi&logoColor=white)](https://pypi.org/project/remote-fileshare/)
+[![CI](https://github.com/chao5go/remote-fileshare/actions/workflows/ci.yml/badge.svg)](https://github.com/chao5go/remote-fileshare/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/chao5go/remote-fileshare/blob/main/LICENSE)
+
 **在浏览器和远程服务器之间传文件。** 一行命令在服务器上启动，打开网页就能上传、下载、管理文件。不用装 FTP，不用配 scp，也不用折腾 VS Code 插件。
 
 适合这样的场景：你在本地电脑上通过 Claude Code、Codex、opencode 等 **AI agent** 远程操作一台服务器，需要把图片、文档、整个文件夹传给 agent 处理，或者把 agent 生成的结果拿回本地。
 
 > ⚠️ **特别提醒**：服务器在境外时，直接在 VS Code / 终端里拖拽上传大文件会很慢，还容易中断。传大文件、整个文件夹，建议用 remote-fileshare 的网页上传：浏览器直连服务器，带进度、速度和剩余时间，体验好很多。
 
-![remote-fileshare 网页界面](docs/screenshot.png)
+![remote-fileshare 网页界面](https://raw.githubusercontent.com/chao5go/remote-fileshare/main/docs/screenshot.png)
 
 ## 安装与启动
 
@@ -69,7 +74,7 @@ nohup npx remote-fileshare /path/to/share > fileshare.log 2>&1 &
 pkill -f remote-fileshare   # 停止
 ```
 
-更推荐用 systemd 托管，开机自启、崩溃自动重启，示例见 [`contrib/remote-fileshare.service`](contrib/remote-fileshare.service)。
+更推荐用 systemd 托管，开机自启、崩溃自动重启，示例见 [`contrib/remote-fileshare.service`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/remote-fileshare.service)。
 
 ## 配置
 
@@ -96,7 +101,7 @@ remote-fileshare 本身只提供 HTTP，以保持零依赖。需要 HTTPS 时，
 HOST=127.0.0.1 TRUST_PROXY=1 npx remote-fileshare /path/to/share   # 只监听本机，不直接暴露
 ```
 
-Caddy 配置见 [`contrib/Caddyfile`](contrib/Caddyfile)。有域名时只需要两行配置。**没有域名也可以**：Let's Encrypt 支持直接给公网 IP 签证书（需要 Caddy 2.10 以上版本），访问地址就是 `https://你的IP`，也可以带端口，例如 `https://你的IP:8001`。两种方式都需要放行 80 端口，证书申请和续期要用它。
+Caddy 配置见 [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile)。有域名时只需要两行配置。**没有域名也可以**：Let's Encrypt 支持直接给公网 IP 签证书（需要 Caddy 2.10 以上版本），访问地址就是 `https://你的IP`，也可以带端口，例如 `https://你的IP:8001`。两种方式都需要放行 80 端口，证书申请和续期要用它。
 
 ## 配合 AI agent 使用
 
@@ -163,7 +168,16 @@ npm run sync-ui          # 改了 remote-fileshare.js 里的网页界面后，�
 
 测试会在临时目录里启动真实的服务器逐项验证，并对比两个版本生成的页面必须完全一致。不需要安装任何依赖。
 
-[`docs/PROMPT.md`](docs/PROMPT.md) 是这个项目最初的 Claude Code 提示词。
+### 发布新版本
+
+```bash
+node scripts/bump-version.js 1.2.0       # 同时修改三处版本号
+git commit -am "Release 1.2.0" && git push
+```
+
+推送到 main 后，GitHub Actions 会检查这个版本是否已经发布过；没发布过就跑完整测试，然后自动发布到 npm 和 PyPI，并创建 GitHub Release（tag `v1.2.0`）。仓库需要配置 `NPM_TOKEN` 和 `PYPI_TOKEN` 两个 Actions secrets，详见 [`.github/workflows/release.yml`](https://github.com/chao5go/remote-fileshare/blob/main/.github/workflows/release.yml)。
+
+[`docs/PROMPT.md`](https://github.com/chao5go/remote-fileshare/blob/main/docs/PROMPT.md) 是这个项目最初的 Claude Code 提示词。
 
 ## English
 
@@ -179,10 +193,10 @@ uvx remote-fileshare /path/to/share     # Python 3.8+
 - Upload files, whole folders or drag-and-drop, with progress, speed and ETA. There is no request timeout.
 - Download with resume support. Folders stream as `.tar.gz`. Images, PDFs, media and code can be previewed in a sandbox.
 - Copy any file's absolute server path in one click to paste to your agent.
-- HTTPS works by putting Caddy in front, even without a domain (Let's Encrypt IP certificates). See [`contrib/Caddyfile`](contrib/Caddyfile).
+- HTTPS works by putting Caddy in front, even without a domain (Let's Encrypt IP certificates). See [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile).
 
 The UI is in Chinese. Configuration uses the environment variables listed above.
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](https://github.com/chao5go/remote-fileshare/blob/main/LICENSE)

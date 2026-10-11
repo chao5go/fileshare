@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 18
+            python: "3.8"
+          - node: 22
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python ${{ matrix.python }}
+        run: |
+          uv python install ${{ matrix.python }}
+          echo "PYTHON=$(uv python find ${{ matrix.python }})" >> "$GITHUB_ENV"
+      - name: Test Node version
+        run: npm test
+      - name: Test Python version
+        run: npm run test:python
+      - name: Check ui.py is in sync
+        run: node scripts/sync-ui.js --check

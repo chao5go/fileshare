@@ -1,0 +1,83 @@
+# 自动发布：推送到 main 后，如果 package.json 里的版本号还没发布过，
+# 就跑测试，然后发布到 npm 和 PyPI，并创建 GitHub Release（tag v<版本号>）。
+# 改版本号：node scripts/bump-version.js 1.2.0
+#
+# 需要在仓库 Settings → Secrets and variables → Actions 里配置：
+#   NPM_TOKEN   npm 的 Granular Access Token（Read and write，勾选 Bypass two-factor authentication）
+#   PYPI_TOKEN  PyPI 的 API token
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check which registries need this version
+        id: check
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then npm=false; else npm=true; fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/$NAME/$VERSION/json")
+          if [ "$code" = 200 ]; then pypi=false; else pypi=true; fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then tag=false; else tag=true; fi
+          echo "npm=$npm" >> "$GITHUB_OUTPUT"
+          echo "pypi=$pypi" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "$NAME $VERSION → npm: $npm, PyPI: $pypi, GitHub Release: $tag"
+
+      - name: Install Python
+        if: steps.check.outputs.npm == 'true' || steps.check.outputs.pypi == 'true'
+        run: |
+          uv python install 3.13
+          echo "PYTHON=$(uv python find 3.13)" >> "$GITHUB_ENV"
+
+      - name: Test
+        if: steps.check.outputs.npm == 'true' || steps.check.outputs.pypi == 'true'
+        run: |
+          npm test
+          npm run test:python
+          node scripts/sync-ui.js --check
+
+      - name: Publish to npm
+        if: steps.check.outputs.npm == 'true'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.pypi == 'true'
+        run: |
+          uv build
+          uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.tag == 'true'
+        run: gh release create "v${{ steps.check.outputs.version }}" --target "$GITHUB_SHA" --title "v${{ steps.check.outputs.version }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
