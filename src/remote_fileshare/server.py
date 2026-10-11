@@ -71,7 +71,7 @@ class Config:
     def __init__(self):
         args = [a for a in sys.argv[1:] if not a.startswith("-")]
         self.https = "--https" in sys.argv
-        self.user = os.environ.get("FS_USER") or "admin"
+        self.user = os.environ.get("FS_USER", "").strip() or "admin"
         try:
             self.port = int(os.environ.get("PORT") or 8001) or 8001
         except ValueError:
@@ -90,8 +90,8 @@ class Config:
         self.password_hash = sha256(self.password)
 
     def load_password(self):
-        if os.environ.get("PASS"):
-            return os.environ["PASS"]
+        if os.environ.get("PASS", "").strip():
+            return os.environ["PASS"].strip()
         try:
             with open(self.pass_file, encoding="utf-8") as f:
                 saved = f.read().strip()
@@ -339,7 +339,8 @@ class Handler(BaseHTTPRequestHandler):
             return False
         if ":" not in decoded:
             return False
-        user, password = decoded.split(":", 1)
+        # 去掉首尾空白：复制粘贴密码时常带上多余的空格或换行。
+        user, password = (part.strip() for part in decoded.split(":", 1))
         user_ok = hmac.compare_digest(sha256(user), sha256(self.cfg.user))
         pass_ok = hmac.compare_digest(sha256(password), self.cfg.password_hash)
         return user_ok and pass_ok

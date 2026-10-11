@@ -37,7 +37,7 @@ if (process.argv.includes('-h') || process.argv.includes('--help')) {
 if (process.argv.includes('-v') || process.argv.includes('--version')) { console.log(VERSION); process.exit(0); }
 
 const HTTPS = process.argv.includes('--https');
-const USERNAME = process.env.FS_USER || 'admin';
+const USERNAME = (process.env.FS_USER || '').trim() || 'admin';
 const PORT = Number(process.env.PORT) || 8001;
 // --https 时本程序只监听本机随机端口，由 Caddy 对外提供 HTTPS 并转发过来。
 const HOST = HTTPS ? '127.0.0.1' : process.env.HOST || '0.0.0.0';
@@ -48,7 +48,7 @@ const ROOT = fs.realpathSync(path.resolve(process.argv.slice(2).find(a => !a.sta
 
 let passwordGenerated = false;
 function loadPassword() {
-  if (process.env.PASS) return process.env.PASS;
+  if (process.env.PASS && process.env.PASS.trim()) return process.env.PASS.trim();
   try {
     const saved = fs.readFileSync(PASS_FILE, 'utf8').trim();
     if (saved) return saved;
@@ -89,8 +89,9 @@ function authorized(req) {
   try { decoded = Buffer.from(value.slice(6), 'base64').toString('utf8'); } catch { return false; }
   const colon = decoded.indexOf(':');
   if (colon < 0) return false;
-  const userOk = crypto.timingSafeEqual(sha256(decoded.slice(0, colon)), sha256(USERNAME));
-  const passOk = crypto.timingSafeEqual(sha256(decoded.slice(colon + 1)), PASSWORD_HASH);
+  // 去掉首尾空白：复制粘贴密码时常带上多余的空格或换行。
+  const userOk = crypto.timingSafeEqual(sha256(decoded.slice(0, colon).trim()), sha256(USERNAME));
+  const passOk = crypto.timingSafeEqual(sha256(decoded.slice(colon + 1).trim()), PASSWORD_HASH);
   return userOk && passOk;
 }
 
