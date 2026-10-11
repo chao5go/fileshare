@@ -588,15 +588,16 @@ server.listen(HTTPS ? 0 : PORT, HOST, () => {
     return startHttps(server.address().port);
   }
   console.log(`remote-fileshare ${VERSION} 已启动：http://${HOST}:${PORT}`);
-  if (HOST === '0.0.0.0' || HOST === '::') {
-    const ips = Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
-    for (const ip of ['127.0.0.1', ...ips]) console.log(`访问地址：http://${ip}:${PORT}`);
-  }
   printCredentials();
-  if (HOST !== '127.0.0.1' && HOST !== '::1' && HOST !== 'localhost') {
-    publicHost().then(host => {
-      if (host) console.log(`外网访问：http://${hostPort(host, PORT)}（需要在防火墙 / 安全组放行 ${PORT} 端口；加 --https 可自动启用 HTTPS）`);
-    });
-  }
+  const hosts = HOST === '0.0.0.0' || HOST === '::'
+    ? ['127.0.0.1', ...Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address)]
+    : [HOST];
+  for (const h of hosts) console.log(`访问地址：http://${hostPort(h, PORT)}`);
+  const hint = () => console.log(`（访问其中一个即可；外网地址需要在防火墙 / 安全组放行 ${PORT} 端口，加 --https 可自动启用 HTTPS）`);
+  if (HOST === '127.0.0.1' || HOST === '::1' || HOST === 'localhost') return;
+  publicHost().then(host => {
+    if (host && !hosts.includes(host)) console.log(`访问地址：http://${hostPort(host, PORT)}`);
+    hint();
+  });
 });
 if (!HTTPS) for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { server.close(); process.exit(0); });

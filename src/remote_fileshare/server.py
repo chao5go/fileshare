@@ -801,15 +801,16 @@ def main():
         caddy = start_https(cfg, backend)
     else:
         print(f"remote-fileshare {__version__} 已启动：http://{cfg.host}:{cfg.port}", flush=True)
-        if cfg.host in ("0.0.0.0", "::"):
-            for ip in ["127.0.0.1"] + local_addresses():
-                print(f"访问地址：http://{ip}:{cfg.port}", flush=True)
         print_credentials(cfg)
+        hosts = ["127.0.0.1"] + local_addresses() if cfg.host in ("0.0.0.0", "::") else [cfg.host]
+        for h in hosts:
+            print(f"访问地址：http://{host_port(h, cfg.port)}", flush=True)
         if cfg.host not in ("127.0.0.1", "::1", "localhost"):
             def announce():
                 host = public_host()
-                if host:
-                    print(f"外网访问：http://{host_port(host, cfg.port)}（需要在防火墙 / 安全组放行 {cfg.port} 端口；加 --https 可自动启用 HTTPS）", flush=True)
+                if host and host not in hosts:
+                    print(f"访问地址：http://{host_port(host, cfg.port)}", flush=True)
+                print(f"（访问其中一个即可；外网地址需要在防火墙 / 安全组放行 {cfg.port} 端口，加 --https 可自动启用 HTTPS）", flush=True)
             threading.Thread(target=announce, daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
