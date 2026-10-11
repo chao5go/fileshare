@@ -1,6 +1,7 @@
 'use strict';
 
-// 端到端测试：在临时目录启动一个真实的服务器，用 fetch 逐项验证。运行：npm test
+// 端到端测试：在临时目录启动一个真实的服务器，用 fetch 逐项验证。
+// 同一套测试同时用于两个实现：npm test（Node 版）、npm run test:python（Python 版）。
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn, execFileSync } = require('node:child_process');
@@ -13,6 +14,25 @@ const PASS = 'test-password-123';
 let server, base, root, tmp;
 const auth = 'Basic ' + Buffer.from('admin:' + PASS).toString('base64');
 const req = (p, opts = {}) => fetch(base + p, { redirect: 'manual', ...opts, headers: { authorization: auth, ...opts.headers } });
+
+const IMPL = process.env.FILESHARE_IMPL || 'node';
+const PYTHON = process.env.PYTHON || 'python3';
+function startServer(dir, env) {
+  return startServerImpl(IMPL, dir, env);
+}
+
+function startServerImpl(impl, dir, env) {
+  const [cmd, args, extra] = impl === 'python'
+    ? [PYTHON, ['-m', 'remote_fileshare', dir], { PYTHONPATH: path.join(__dirname, '..', 'src'), PYTHONUNBUFFERED: '1' }]
+    : [process.execPath, [path.join(__dirname, '..', 'remote-fileshare.js'), dir], {}];
+  const child = spawn(cmd, args, { env: { ...process.env, ...extra, ...env }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const ready = new Promise((resolve, reject) => {
+    let out = '';
+    child.stdout.on('data', d => { out += d; if (out.includes('已启动')) resolve(); });
+    child.on('exit', code => reject(new Error('server exited ' + code)));
+  });
+  return { child, ready };
+}
 
 function freePort() {
   return new Promise(resolve => {
@@ -27,14 +47,9 @@ before(async () => {
   fs.writeFileSync(path.join(tmp, 'secret.txt'), 'outside');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  server = spawn(process.execPath, [path.join(__dirname, '..', 'fileshare.js'), root], {
-    env: { ...process.env, PASS, PORT: String(port), HOST: '127.0.0.1' },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
-  await new Promise((resolve, reject) => {
-    server.stdout.on('data', d => { if (String(d).includes('已启动')) resolve(); });
-    server.on('exit', code => reject(new Error('server exited ' + code)));
-  });
+  const started = startServer(root, { PASS, PORT: String(port), HOST: '127.0.0.1' });
+  server = started.child;
+  await started.ready;
 });
 
 after(() => {
@@ -138,7 +153,8 @@ test('跨站写请求被拒绝，同源放行', async () => {
 });
 
 test('目录不带斜杠时重定向，HTML 转义文件名', async () => {
-  await req('/?mkdir=dir', { method: 'POST' });
+  const made = await req('/?mkdir=dir', { method: 'POST' });
+  assert.equal(made.status, 201, await made.text());
   const res = await req('/dir');
   assert.equal(res.status, 301);
   assert.equal(res.headers.get('location'), '/dir/');
@@ -148,20 +164,11 @@ test('目录不带斜杠时重定向，HTML 转义文件名', async () => {
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;.txt'));
 });
 
-test('连续登录失败后锁定', async () => {
-  const bad = 'Basic ' + Buffer.from('admin:wrong').toString('base64');
-  for (let i = 0; i < 10; i++) await fetch(base + '/', { headers: { authorization: bad } });
-  assert.equal((await req('/')).status, 429);
-});
-
 test('TRUST_PROXY：按 X-Forwarded-For 区分客户端限流', async () => {
   const port = await freePort();
-  const proxied = spawn(process.execPath, [path.join(__dirname, '..', 'fileshare.js'), root], {
-    env: { ...process.env, PASS, PORT: String(port), HOST: '127.0.0.1', TRUST_PROXY: '1' },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
+  const { child: proxied, ready } = startServer(root, { PASS, PORT: String(port), HOST: '127.0.0.1', TRUST_PROXY: '1' });
   try {
-    await new Promise(resolve => proxied.stdout.on('data', d => { if (String(d).includes('已启动')) resolve(); }));
+    await ready;
     const url = `http://127.0.0.1:${port}/`;
     const bad = 'Basic ' + Buffer.from('admin:wrong').toString('base64');
     for (let i = 0; i < 10; i++) await fetch(url, { headers: { authorization: bad, 'x-forwarded-for': '203.0.113.9' } });
@@ -170,4 +177,75 @@ test('TRUST_PROXY：按 X-Forwarded-For 区分客户端限流', async () => {
   } finally {
     proxied.kill();
   }
+});
+
+test('keep-alive：被拒绝的上传不会把请求体残留到下一个请求', async () => {
+  const sock = net.connect(Number(new URL(base).port), '127.0.0.1');
+  await new Promise(resolve => sock.once('connect', resolve));
+  let buf = '';
+  sock.on('data', d => { buf += d; });
+  const until = async pred => { for (let i = 0; i < 100 && !pred(); i++) await new Promise(r => setTimeout(r, 20)); };
+  const host = new URL(base).host;
+  sock.write(`PUT /ka.txt HTTP/1.1\r\nHost: ${host}\r\nAuthorization: ${auth}\r\nContent-Length: 1\r\n\r\na`);
+  await until(() => / 201 /.test(buf));
+  assert.match(buf, /^HTTP\/1\.1 201 /);
+  buf = '';
+  sock.write(`PUT /ka2.txt HTTP/1.1\r\nHost: ${host}\r\nAuthorization: ${auth}\r\nOrigin: https://evil.example\r\nContent-Length: 1\r\n\r\nx`);
+  await until(() => / 403 /.test(buf));
+  assert.match(buf, /^HTTP\/1\.1 403 /);
+  // 服务器要么关闭连接，要么正确处理下一个请求，绝不能把残留的 "x" 当成下一个请求的开头。
+  buf = '';
+  if (!sock.destroyed && sock.writable) {
+    sock.write(`GET /ka.txt HTTP/1.1\r\nHost: ${host}\r\nAuthorization: ${auth}\r\n\r\n`);
+    await until(() => buf.length > 0 || sock.destroyed);
+    if (buf) assert.match(buf, /^HTTP\/1\.1 200 /);
+  }
+  sock.destroy();
+  await req('/ka.txt', { method: 'DELETE' });
+});
+
+test('两个实现生成的目录页面完全一致', async t => {
+  const dir = path.join(tmp, 'parity');
+  fs.mkdirSync(path.join(dir, 'dir10'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'dir2'));
+  fs.writeFileSync(path.join(dir, 'b.txt'), '');
+  fs.writeFileSync(path.join(dir, 'A.md'), 'x'.repeat(2304)); // 2.25 KB：四舍五入的边界
+  fs.writeFileSync(path.join(dir, '中文 & <名字>.png'), 'x'.repeat(1500000));
+  fs.writeFileSync(path.join(dir, "it's.bin"), 'x'.repeat(10 * 1024 * 1024 - 1));
+  const pages = {};
+  for (const impl of ['node', 'python']) {
+    const port = await freePort();
+    const { child, ready } = startServerImpl(impl, dir, { PASS, PORT: String(port), HOST: '127.0.0.1' });
+    try {
+      await ready;
+      const get = p => fetch(`http://127.0.0.1:${port}${p}`, { headers: { authorization: auth } }).then(r => r.text());
+      pages[impl] = [await get('/'), await get('/dir10/')];
+    } catch (err) {
+      if (impl === 'python') return t.skip('没有可用的 python3：' + err.message);
+      throw err;
+    } finally {
+      child.kill();
+    }
+  }
+  assert.equal(pages.python[0], pages.node[0]);
+  assert.equal(pages.python[1], pages.node[1]);
+});
+
+test('版本号一致', () => {
+  const pkg = require('../package.json');
+  const init = fs.readFileSync(path.join(__dirname, '..', 'src', 'remote_fileshare', '__init__.py'), 'utf8');
+  assert.equal(/__version__ = "([^"]+)"/.exec(init)[1], pkg.version);
+  const js = fs.readFileSync(path.join(__dirname, '..', 'remote-fileshare.js'), 'utf8');
+  assert.equal(/const VERSION = '([^']+)'/.exec(js)[1], pkg.version);
+});
+
+test('ui.py 与 Node 版界面同步', () => {
+  execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'sync-ui.js'), '--check']);
+});
+
+// 放在最后：会把 127.0.0.1 锁定，之后对主服务器的请求都会返回 429。
+test('连续登录失败后锁定', async () => {
+  const bad = 'Basic ' + Buffer.from('admin:wrong').toString('base64');
+  for (let i = 0; i < 10; i++) await fetch(base + '/', { headers: { authorization: bad } });
+  assert.equal((await req('/')).status, 429);
 });

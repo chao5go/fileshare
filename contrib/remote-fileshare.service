@@ -1,0 +1,28 @@
+# systemd 服务示例：开机自启、崩溃自动重启。
+# 安装：
+#   先全局安装：npm install -g remote-fileshare   或   uv tool install remote-fileshare
+#   which remote-fileshare 查到可执行文件路径，填到下面的 ExecStart
+#   sudo cp contrib/remote-fileshare.service /etc/systemd/system/
+#   按需修改路径、用户和端口
+#   sudo systemctl daemon-reload && sudo systemctl enable --now remote-fileshare
+# 查看日志（含首次生成的密码）：journalctl -u remote-fileshare -f
+
+[Unit]
+Description=remote-fileshare web file sharing server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/remote-fileshare /root/share
+Environment=PORT=8001
+# 放在 Caddy 等反向代理后面时，打开下面两行（见 contrib/Caddyfile）
+# Environment=HOST=127.0.0.1
+# Environment=TRUST_PROXY=1
+# 不设置 PASS 时，密码随机生成并保存在该用户的 ~/.config/remote-fileshare/password
+# Environment=PASS=change-me
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

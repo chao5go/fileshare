@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// fileshare — 零依赖的单文件网页文件共享服务器。
-// 用法：node fileshare.js [共享目录]    详见 README.md
+// remote-fileshare — 远程文件共享：零依赖、单文件，在浏览器和远程服务器之间传文件。
+// 用法：npx remote-fileshare [共享目录]  或  node remote-fileshare.js [共享目录]    详见 README.md
+// 网页界面（UI_* 常量）与 Python 版共用，改动后运行 node scripts/sync-ui.js 同步。
 
 const http = require('http');
 const fs = require('fs');
@@ -11,19 +12,19 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
-  console.log(`fileshare ${VERSION}
+  console.log(`remote-fileshare ${VERSION} — 远程文件共享
 
-用法：node fileshare.js [共享目录]
+用法：remote-fileshare [共享目录]
 
 环境变量：
   PORT      监听端口（默认 8001）
   HOST      监听地址（默认 0.0.0.0）
   FS_USER   登录用户名（默认 admin）
   PASS      登录密码（不设置则首次运行随机生成，并保存到密码文件）
-  PASS_FILE 密码文件路径（默认 ~/.config/fileshare/password）
+  PASS_FILE 密码文件路径（默认 ~/.config/remote-fileshare/password）
   TRUST_PROXY=1  放在本机反向代理（Caddy/Nginx）后面时设置，从 X-Forwarded-For 读取真实客户端 IP`);
   process.exit(0);
 }
@@ -33,7 +34,7 @@ const USERNAME = process.env.FS_USER || 'admin';
 const PORT = Number(process.env.PORT) || 8001;
 const HOST = process.env.HOST || '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
-const PASS_FILE = process.env.PASS_FILE || path.join(os.homedir(), '.config', 'fileshare', 'password');
+const PASS_FILE = process.env.PASS_FILE || path.join(os.homedir(), '.config', 'remote-fileshare', 'password');
 const ROOT = fs.realpathSync(path.resolve(process.argv.slice(2).find(a => !a.startsWith('-')) || '.'));
 
 let passwordGenerated = false;
@@ -154,6 +155,11 @@ function disposition(type, filename) {
   return `${type}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
+function timeText(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 function sizeText(bytes) {
   if (bytes < 1024) return bytes + ' B';
   const units = ['KB', 'MB', 'GB', 'TB'];
@@ -174,56 +180,19 @@ function previewType(name) {
   return MIME[path.extname(name).slice(1).toLowerCase()];
 }
 
-const DL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>';
-
-function icon(kind) {
-  return kind === 'dir'
-    ? '<svg class="typeIcon folder" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5a2 2 0 0 1 2-2h5l2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
-    : '<svg class="typeIcon file" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.8h8l4 4v14.4H6z"/><path d="M14 2.8v4h4"/></svg>';
-}
-
-async function renderDirectory(req, res, target) {
-  const dirents = await fs.promises.readdir(target, { withFileTypes: true });
-  const entries = await Promise.all(dirents.map(async d => {
-    const full = path.join(target, d.name);
-    const stat = await fs.promises.stat(full).catch(() => null);
-    return stat && { name: d.name, full, dir: stat.isDirectory(), stat };
-  }));
-  const visible = entries.filter(e => e && !/^\..+\.[0-9a-f]{16}\.upload$/.test(e.name));
-  visible.sort((a, b) => (Number(b.dir) - Number(a.dir)) || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
-
-  const rel = path.relative(ROOT, target);
-  const crumbs = ['<a href="/">共享空间</a>'];
-  if (rel) {
-    let current = ROOT;
-    for (const part of rel.split(path.sep)) {
-      current = path.join(current, part);
-      crumbs.push(`<span>/</span><a href="${urlPath(current)}/">${esc(part)}</a>`);
-    }
-  }
-  const rows = visible.map(e => {
-    const href = urlPath(e.full) + (e.dir ? '/' : '');
-    const dl = e.dir ? href + '?tar' : href;
-    const preview = !e.dir && previewType(e.name) ? `<a class="act" href="${href}?preview" target="_blank" rel="noopener">预览</a>` : '';
-    return `<div class="row" data-name="${esc(e.name.toLocaleLowerCase())}" draggable="true" data-download="${esc(dl)}" data-filename="${esc(e.dir ? e.name + '.tar.gz' : e.name)}">
-      <div class="name">${icon(e.dir ? 'dir' : 'file')}<a href="${href}" ${e.dir ? 'title="打开文件夹"' : 'download title="点击下载"'}>${esc(e.name)}</a></div>
-      <div class="size">${e.dir ? '—' : esc(sizeText(e.stat.size))}</div>
-      <div class="time">${esc(e.stat.mtime.toLocaleString('zh-CN', { hour12: false }))}</div>
-      <div class="actions"><a class="dl" href="${esc(dl)}" ${e.dir ? '' : 'download'} data-name="${esc(e.name)}" data-tar="${e.dir ? 1 : ''}">${DL_ICON}${e.dir ? '打包下载' : '下载'}</a>${preview.replace('class="act"', 'class="act sub"')}<button class="sub" data-action="copy" data-path="${esc(e.full)}">复制路径</button><button class="sub" data-action="rename" data-url="${esc(href)}" data-name="${esc(e.name)}">改名</button><button class="sub danger" data-action="delete" data-url="${esc(href)}" data-name="${esc(e.name)}">删除</button></div>
-    </div>`;
-  }).join('');
-  const json = v => JSON.stringify(v).replace(/</g, '\\u003c');
-  const safeBase = json(urlPath(target) + (target === ROOT ? '' : '/'));
-  const logo = '<svg viewBox="0 0 44 44" aria-hidden="true"><rect width="44" height="44" rx="12" fill="#4f46e5"/><path d="M15 18l7-7 7 7M22 12v20M29 26l-7 7-7-7" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  const favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Crect width='44' height='44' rx='12' fill='%234f46e5'/%3E%3Cpath d='M15 18l7-7 7 7M22 12v20M29 26l-7 7-7-7' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="icon" href="${favicon}"><title>${esc(rel || '共享空间')} · 文件共享</title><style>
-:root{--bg:#f5f6fb;--card:#fff;--text:#181a27;--muted:#70748a;--line:#e5e7f0;--hover:#f0f1ff;--primary:#4f46e5;--primary2:#3730a3;--danger:#d83b2d;--shadow:0 15px 45px rgba(42,45,80,.08)}
+// ---- 网页界面：以下 UI_* 常量与 Python 版（src/remote_fileshare/ui.py）保持一致 ----
+const UI_LOGO = '<svg viewBox="0 0 44 44" aria-hidden="true"><rect width="44" height="44" rx="12" fill="#4f46e5"/><path d="M15 18l7-7 7 7M22 12v20M29 26l-7 7-7-7" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const UI_FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Crect width='44' height='44' rx='12' fill='%234f46e5'/%3E%3Cpath d='M15 18l7-7 7 7M22 12v20M29 26l-7 7-7-7' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
+const UI_TOP = `<div class="progressTop" id="progressTop"></div><div class="drop" id="drop">松开即可上传到这里</div><main class="wrap"><header class="brand">${UI_LOGO}<div><h1>远程文件共享</h1><p>浏览器 ⇄ 远程服务器，大文件、整个文件夹随传随取 · 复制路径即可发给 AI agent</p></div></header><nav class="crumbs">`;
+const UI_MIDDLE = `<button class="copyDir" id="copyDir" title="复制当前目录在服务器上的绝对路径">复制当前目录路径</button></nav><div class="toolbar"><input id="filter" class="filter" type="search" placeholder="筛选当前目录…" autocomplete="off"><button class="btn" id="upload">上传文件</button><button class="btn secondary" id="uploadFolder">上传文件夹</button><button class="btn secondary" id="mkdir">新建目录</button><input id="picker" type="file" multiple><input id="folderPicker" type="file" webkitdirectory multiple></div><div class="status" id="status">点文件名或「下载」按钮即可下载到本地；文件夹用「打包下载」得到 .tar.gz。把文件拖到页面上即可上传。</div><section class="card"><div class="row head"><div>名称</div><div>大小</div><div class="time">修改时间</div><div></div></div><div id="list">`;
+const UI_EMPTY = `<div class="empty"><strong>这里还是空的</strong>上传文件、把文件拖到页面上，或新建一个目录开始整理。</div>`;
+const UI_BOTTOM = `</div></section></main>`;
+const UI_STYLE = `:root{--bg:#f5f6fb;--card:#fff;--text:#181a27;--muted:#70748a;--line:#e5e7f0;--hover:#f0f1ff;--primary:#4f46e5;--primary2:#3730a3;--danger:#d83b2d;--shadow:0 15px 45px rgba(42,45,80,.08)}
 @media(prefers-color-scheme:dark){:root{--bg:#11131b;--card:#1a1d29;--text:#f0f1f8;--muted:#9297ad;--line:#303444;--hover:#24283a;--primary:#8b83ff;--primary2:#b0abff;--danger:#ff695c;--shadow:0 18px 50px rgba(0,0,0,.25)}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:var(--primary);text-decoration:none}button,input{font:inherit}.wrap{width:min(1100px,calc(100% - 32px));margin:0 auto;padding:38px 0 70px}.brand{display:flex;align-items:center;gap:13px;margin-bottom:30px}.brand svg{width:42px;height:42px}.brand h1{font-size:22px;margin:0;letter-spacing:-.02em}.brand p{margin:1px 0 0;color:var(--muted);font-size:13px}.toolbar{display:flex;gap:10px;align-items:center;margin:18px 0}.filter{min-width:160px;flex:1;border:1px solid var(--line);color:var(--text);background:var(--card);border-radius:11px;padding:10px 13px;outline:none}.filter:focus{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 16%,transparent)}.btn{border:0;background:var(--primary);color:white;border-radius:10px;padding:10px 14px;cursor:pointer;font-weight:650;white-space:nowrap}.btn.secondary{background:var(--card);color:var(--primary);border:1px solid var(--line)}.btn:disabled{opacity:.5;cursor:default}.crumbs{font:13px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center}.crumbs .copyDir{margin-left:auto;border:0;background:transparent;color:var(--primary);cursor:pointer;font:12px system-ui,sans-serif;padding:2px 0}.card{background:var(--card);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow);overflow:hidden}.row{display:grid;grid-template-columns:minmax(200px,1fr) 90px 170px 330px;align-items:center;min-height:58px;padding:0 18px;border-bottom:1px solid var(--line);transition:background .15s}.row:last-child{border-bottom:0}.row:hover{background:var(--hover)}.head{min-height:43px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.name{min-width:0;display:flex;align-items:center;gap:10px}.name>a:first-of-type{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-weight:600}.typeIcon{width:21px;height:21px;flex:none;fill:none;stroke:var(--muted);stroke-width:1.7}.typeIcon.folder{fill:color-mix(in srgb,var(--primary) 17%,transparent);stroke:var(--primary)}.size,.time,.crumbs{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.size,.time{font-size:12px;color:var(--muted)}.actions{display:flex;justify-content:flex-start;align-items:center;gap:2px}.actions .sub{opacity:.3;transition:opacity .15s}.row:hover .actions .sub,.row:focus-within .actions .sub{opacity:1}.dl{display:inline-flex;align-items:center;gap:5px;margin-right:6px;padding:6px 12px;border-radius:9px;background:color-mix(in srgb,var(--primary) 13%,transparent);color:var(--primary);font-size:13px;font-weight:650;white-space:nowrap;transition:background .15s,color .15s}.dl:hover,.dl:focus-visible{background:var(--primary);color:#fff}.dl svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.status.ok{color:var(--primary)}.actions button,.actions .act{border:0;background:transparent;color:var(--primary);cursor:pointer;padding:7px;font-size:14px}.actions .danger:hover{color:var(--danger)}.empty{text-align:center;padding:70px 20px;color:var(--muted)}.empty strong{display:block;color:var(--text);font-size:18px;margin-bottom:5px}.drop{position:fixed;z-index:20;inset:14px;display:none;place-items:center;border:3px dashed var(--primary);border-radius:24px;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(5px);font-size:24px;font-weight:750;color:var(--primary);pointer-events:none}.drop.show{display:grid}.progressTop{position:fixed;z-index:30;left:0;top:0;height:3px;background:var(--danger);width:0;transition:width .15s}.status{min-height:24px;color:var(--muted);font-size:13px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.status.error{color:var(--danger)}#picker,#folderPicker{display:none}
 @media(max-width:600px){.wrap{width:min(100% - 20px,1100px);padding-top:20px}.toolbar{flex-wrap:wrap}.filter{flex-basis:100%}.row{grid-template-columns:minmax(80px,1fr) 52px 172px;padding:0 8px}.time{display:none}.head{grid-template-columns:minmax(80px,1fr) 52px 172px}.actions .sub{opacity:.8}.actions [data-action=copy]{display:none}.actions button,.actions .act{padding:6px 4px;font-size:12px}.dl{padding:5px 9px;font-size:12px;margin-right:2px}.brand{margin-bottom:20px}}
-@media(hover:none){.actions .sub{opacity:1}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
-</style></head><body><div class="progressTop" id="progressTop"></div><div class="drop" id="drop">松开即可上传到这里</div><main class="wrap"><header class="brand">${logo}<div><h1>文件共享</h1><p>轻巧、安全，随取随放 · 复制路径即可发给 AI agent</p></div></header><nav class="crumbs">${crumbs.join('')}<button class="copyDir" id="copyDir" title="复制当前目录在服务器上的绝对路径">复制当前目录路径</button></nav><div class="toolbar"><input id="filter" class="filter" type="search" placeholder="筛选当前目录…" autocomplete="off"><button class="btn" id="upload">上传文件</button><button class="btn secondary" id="uploadFolder">上传文件夹</button><button class="btn secondary" id="mkdir">新建目录</button><input id="picker" type="file" multiple><input id="folderPicker" type="file" webkitdirectory multiple></div><div class="status" id="status">点文件名或「下载」按钮即可下载到本地；文件夹用「打包下载」得到 .tar.gz。把文件拖到页面上即可上传。</div><section class="card"><div class="row head"><div>名称</div><div>大小</div><div class="time">修改时间</div><div></div></div><div id="list">${rows || '<div class="empty"><strong>这里还是空的</strong>上传文件、把文件拖到页面上，或新建一个目录开始整理。</div>'}</div></section></main><script>
-const BASE=${safeBase}, DIR=${json(target)}, list=document.querySelector('#list'), statusEl=document.querySelector('#status'), bar=document.querySelector('#progressTop');
+@media(hover:none){.actions .sub{opacity:1}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}`;
+const UI_SCRIPT = `const list=document.querySelector('#list'), statusEl=document.querySelector('#status'), bar=document.querySelector('#progressTop');
 const pathURL=p=>BASE+p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
 const human=b=>{const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return b.toFixed(i&&b<10?1:0)+' '+u[i]};
 const clock=s=>!isFinite(s)?'--':s>=3600?Math.floor(s/3600)+'时'+Math.floor(s%3600/60)+'分':s>=60?Math.floor(s/60)+'分'+Math.round(s%60)+'秒':Math.round(s)+'秒';
@@ -244,8 +213,77 @@ document.addEventListener('dragstart',e=>{const row=e.target.closest&&e.target.c
 const hasFiles=e=>[...(e.dataTransfer?.types||[])].includes('Files');
 document.addEventListener('dragenter',e=>{if(draggingOut||!hasFiles(e))return;e.preventDefault();dragDepth++;drop.classList.add('show')});document.addEventListener('dragover',e=>{if(!draggingOut&&hasFiles(e))e.preventDefault()});document.addEventListener('dragleave',e=>{if(draggingOut||!hasFiles(e))return;dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)drop.classList.remove('show')});
 document.addEventListener('drop',async e=>{if(draggingOut||!hasFiles(e))return;e.preventDefault();dragDepth=0;drop.classList.remove('show');const items=[...e.dataTransfer.items],files=[];if(items.some(i=>i.webkitGetAsEntry)){const entries=items.map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);for(const entry of entries)await walkEntry(entry,'',files)}else files.push(...e.dataTransfer.files);uploadFiles(files).catch(()=>{})});
-async function walkEntry(entry,prefix,out){if(entry.isFile){await new Promise(resolve=>entry.file(f=>{f._relativePath=prefix+f.name;out.push(f);resolve()},resolve))}else if(entry.isDirectory){const reader=entry.createReader(),all=[];while(true){const batch=await new Promise(resolve=>reader.readEntries(resolve,()=>resolve([])));if(!batch.length)break;all.push(...batch)}for(const child of all)await walkEntry(child,prefix+entry.name+'/',out)}}
-</script></body></html>`;
+async function walkEntry(entry,prefix,out){if(entry.isFile){await new Promise(resolve=>entry.file(f=>{f._relativePath=prefix+f.name;out.push(f);resolve()},resolve))}else if(entry.isDirectory){const reader=entry.createReader(),all=[];while(true){const batch=await new Promise(resolve=>reader.readEntries(resolve,()=>resolve([])));if(!batch.length)break;all.push(...batch)}for(const child of all)await walkEntry(child,prefix+entry.name+'/',out)}}`;
+
+const UI_DL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>';
+
+const UI_ICON_DIR = '<svg class="typeIcon folder" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5a2 2 0 0 1 2-2h5l2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const UI_ICON_FILE = '<svg class="typeIcon file" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.8h8l4 4v14.4H6z"/><path d="M14 2.8v4h4"/></svg>';
+// ---- 网页界面结束 ----
+
+// 文件夹内排序：数字按数值比较，其余不区分大小写、按码位比较。与 Python 版的 natural_key 规则相同，两边页面完全一致。
+function compareCodePoints(a, b) {
+  const x = [...a], y = [...b];
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const d = x[i].codePointAt(0) - y[i].codePointAt(0);
+    if (d) return d;
+  }
+  return x.length - y.length;
+}
+
+function naturalKey(name) {
+  return name.split(/([0-9]+)/).filter(Boolean).map(p => /^[0-9]+$/.test(p) ? [0, BigInt(p), ''] : [1, 0n, p.toLowerCase()]);
+}
+
+function compareNames(a, b) {
+  const ka = naturalKey(a), kb = naturalKey(b);
+  for (let i = 0; i < Math.min(ka.length, kb.length); i++) {
+    const [ta, na, sa] = ka[i], [tb, nb, sb] = kb[i];
+    if (ta !== tb) return ta - tb;
+    if (na !== nb) return na < nb ? -1 : 1;
+    const c = compareCodePoints(sa, sb);
+    if (c) return c;
+  }
+  return (ka.length - kb.length) || compareCodePoints(a, b);
+}
+
+function icon(kind) {
+  return kind === 'dir' ? UI_ICON_DIR : UI_ICON_FILE;
+}
+
+async function renderDirectory(req, res, target) {
+  const dirents = await fs.promises.readdir(target, { withFileTypes: true });
+  const entries = await Promise.all(dirents.map(async d => {
+    const full = path.join(target, d.name);
+    const stat = await fs.promises.stat(full).catch(() => null);
+    return stat && { name: d.name, full, dir: stat.isDirectory(), stat };
+  }));
+  const visible = entries.filter(e => e && !/^\..+\.[0-9a-f]{16}\.upload$/.test(e.name));
+  visible.sort((a, b) => (Number(b.dir) - Number(a.dir)) || compareNames(a.name, b.name));
+
+  const rel = path.relative(ROOT, target);
+  const crumbs = ['<a href="/">共享空间</a>'];
+  if (rel) {
+    let current = ROOT;
+    for (const part of rel.split(path.sep)) {
+      current = path.join(current, part);
+      crumbs.push(`<span>/</span><a href="${urlPath(current)}/">${esc(part)}</a>`);
+    }
+  }
+  const rows = visible.map(e => {
+    const href = urlPath(e.full) + (e.dir ? '/' : '');
+    const dl = e.dir ? href + '?tar' : href;
+    const preview = !e.dir && previewType(e.name) ? `<a class="act" href="${href}?preview" target="_blank" rel="noopener">预览</a>` : '';
+    return `<div class="row" data-name="${esc(e.name.toLocaleLowerCase())}" draggable="true" data-download="${esc(dl)}" data-filename="${esc(e.dir ? e.name + '.tar.gz' : e.name)}">
+      <div class="name">${icon(e.dir ? 'dir' : 'file')}<a href="${href}" ${e.dir ? 'title="打开文件夹"' : 'download title="点击下载"'}>${esc(e.name)}</a></div>
+      <div class="size">${e.dir ? '—' : esc(sizeText(e.stat.size))}</div>
+      <div class="time">${esc(timeText(e.stat.mtime))}</div>
+      <div class="actions"><a class="dl" href="${esc(dl)}" ${e.dir ? '' : 'download'} data-name="${esc(e.name)}" data-tar="${e.dir ? 1 : ''}">${UI_DL_ICON}${e.dir ? '打包下载' : '下载'}</a>${preview.replace('class="act"', 'class="act sub"')}<button class="sub" data-action="copy" data-path="${esc(e.full)}">复制路径</button><button class="sub" data-action="rename" data-url="${esc(href)}" data-name="${esc(e.name)}">改名</button><button class="sub danger" data-action="delete" data-url="${esc(href)}" data-name="${esc(e.name)}">删除</button></div>
+    </div>`;
+  }).join('');
+  const json = v => JSON.stringify(v).replace(/</g, '\\u003c');
+  const base = urlPath(target) + (target === ROOT ? '' : '/');
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="icon" href="${UI_FAVICON}"><title>${esc(rel || '共享空间')} · 远程文件共享</title><style>\n${UI_STYLE}\n</style></head><body>${UI_TOP}${crumbs.join('')}${UI_MIDDLE}${rows || UI_EMPTY}${UI_BOTTOM}<script>\nconst BASE=${json(base)}, DIR=${json(target)};\n${UI_SCRIPT}\n</script></body></html>`;
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' });
   res.end(html);
 }
@@ -299,7 +337,7 @@ function streamFile(req, res, target, stat, preview) {
 }
 
 function streamTar(req, res, target) {
-  const base = target === ROOT ? (path.basename(ROOT) || 'fileshare') : path.basename(target);
+  const base = target === ROOT ? (path.basename(ROOT) || 'remote-fileshare') : path.basename(target);
   res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': disposition('attachment', base + '.tar.gz'), 'X-Content-Type-Options': 'nosniff' });
   if (req.method === 'HEAD') return res.end();
   const parent = target === ROOT ? ROOT : path.dirname(target);
@@ -446,7 +484,11 @@ const server = http.createServer((req, res) => {
 server.requestTimeout = 0;
 server.headersTimeout = 60 * 1000;
 server.listen(PORT, HOST, () => {
-  console.log(`fileshare ${VERSION} 已启动：http://${HOST}:${PORT}`);
+  console.log(`remote-fileshare ${VERSION} 已启动：http://${HOST}:${PORT}`);
+  if (HOST === '0.0.0.0' || HOST === '::') {
+    const ips = Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
+    for (const ip of ['127.0.0.1', ...ips]) console.log(`访问地址：http://${ip}:${PORT}`);
+  }
   console.log(`共享目录：${ROOT}`);
   console.log(`用户名：${USERNAME}`);
   if (process.env.PASS) console.log('密码：来自环境变量 PASS');

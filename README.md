@@ -1,47 +1,77 @@
-# fileshare
+# remote-fileshare · 远程文件共享
 
-零依赖、单文件的网页文件共享服务器。一个 `fileshare.js`，有 Node.js 就能跑，不需要 `npm install`。
+**在浏览器和远程服务器之间传文件。** 一行命令在服务器上启动，打开网页就能上传、下载、管理文件。不用装 FTP，不用配 scp，也不用折腾 VS Code 插件。
 
-适合这样的场景：你在本地电脑上通过 Claude Code、Codex、opencode 等 **远程 AI agent** 操作一台境外服务器，需要把图片、文档、整个文件夹传给 agent 处理，或者把 agent 生成的结果拿回本地。
+适合这样的场景：你在本地电脑上通过 Claude Code、Codex、opencode 等 **AI agent** 远程操作一台服务器，需要把图片、文档、整个文件夹传给 agent 处理，或者把 agent 生成的结果拿回本地。
 
-> ⚠️ **特别提醒**：服务器在境外时，直接在 VS Code / 终端里拖拽上传大文件会很慢，还容易中断。传大文件、整个文件夹，建议用 fileshare 的网页上传：浏览器直连服务器，带进度、速度和剩余时间，体验好很多。
+> ⚠️ **特别提醒**：服务器在境外时，直接在 VS Code / 终端里拖拽上传大文件会很慢，还容易中断。传大文件、整个文件夹，建议用 remote-fileshare 的网页上传：浏览器直连服务器，带进度、速度和剩余时间，体验好很多。
+
+![remote-fileshare 网页界面](docs/screenshot.png)
+
+## 安装与启动
+
+在**远程服务器**上运行下面任意一种，有 Node.js 或 Python 其中一个就够了：
+
+```bash
+npx remote-fileshare /path/to/share        # Node.js 18+
+uvx remote-fileshare /path/to/share        # Python 3.8+，用 uv
+pipx run remote-fileshare /path/to/share   # Python 3.8+，用 pipx
+```
+
+不传目录时共享当前目录，默认端口 8001。启动后终端会打印访问地址、用户名和密码：
+
+```
+remote-fileshare 1.1.0 已启动：http://0.0.0.0:8001
+访问地址：http://127.0.0.1:8001
+访问地址：http://10.0.0.5:8001
+共享目录：/path/to/share
+用户名：admin
+密码：fRu_aghQlXQ6cJ1bOpWiw-Te（已随机生成并保存到 ~/.config/remote-fileshare/password）
+```
+
+然后在**本地电脑**的浏览器打开 `http://服务器公网IP:8001` 即可。查看服务器公网 IP：`curl -s ifconfig.me`。
+
+<details>
+<summary>其他安装方式</summary>
+
+```bash
+npm install -g remote-fileshare      # 全局安装，之后直接运行 remote-fileshare
+uv tool install remote-fileshare     # 同上，Python 版
+pip install remote-fileshare
+
+# 不经过 npm / PyPI，直接从 GitHub 运行最新代码
+npx github:chao5go/remote-fileshare /path/to/share
+uvx --from git+https://github.com/chao5go/remote-fileshare remote-fileshare /path/to/share
+
+# Node 版是一个零依赖的单文件，也可以直接下载运行
+curl -fsSLO https://raw.githubusercontent.com/chao5go/remote-fileshare/main/remote-fileshare.js
+node remote-fileshare.js /path/to/share
+```
+
+</details>
+
+Node 版和 Python 版功能、接口、网页完全一致，共用同一套测试，选你服务器上现成的那个即可。两个版本都**不依赖任何第三方包**。
 
 ## 功能
 
-- **全站密码保护**：HTTP Basic Auth，密码比对防时序攻击，连续登录失败自动锁定 IP
-- **目录浏览**：面包屑导航、即时筛选、文件夹在前、大小和修改时间、明暗主题自动切换、手机可用
-- **上传**：多选文件、整个文件夹（保留目录结构）、拖拽到页面上传；流式写入不占内存，显示进度、速度、剩余时间；无超时限制，慢速线路传几个小时也不会被掐断
-- **下载**：点文件名直接下载（中文文件名正常），支持断点续传；文件夹一键打包成 `.tar.gz` 流式下载，不落盘；在 Chrome / Edge 里可以把文件直接从网页拖到桌面
+- **全站密码保护**：首次运行随机生成强密码；密码比对防时序攻击；连续登录失败自动锁定 IP
+- **上传**：多选文件、整个文件夹（保留目录结构）、拖拽到页面；流式写入不占内存；显示进度、速度、剩余时间；没有超时限制，慢速线路传几个小时也不会被掐断
+- **下载**：每个文件都有醒目的「下载」按钮，中文文件名正常；支持断点续传；文件夹一键「打包下载」成 `.tar.gz`，流式生成不落盘；在 Chrome / Edge 里还能把文件直接从网页拖到桌面
 - **预览**：图片、PDF、音视频、文本/代码在新标签页打开（放在沙箱里，上传的网页文件无法在本站执行脚本）
-- **管理**：新建目录、改名/移动（不会覆盖已有文件）、删除
-- **给 AI agent 用**：每个文件都有「复制路径」，复制的是它在服务器上的绝对路径，直接粘贴给 agent 即可
+- **管理**：新建目录、改名/移动（不会覆盖已有文件）、删除；即时筛选
+- **给 AI agent 用**：每个文件都能「复制路径」，复制的是它在服务器上的绝对路径，直接粘贴给 agent
+- **好看、好用**：明暗主题自动切换，手机可用
 
-## 快速开始
-
-需要 Node.js 18 及以上版本，以及系统自带的 `tar`（打包下载功能使用）。
-
-```bash
-# 下载（也可以 git clone 整个仓库）
-curl -fsSLO https://raw.githubusercontent.com/chao5go/fileshare/main/fileshare.js
-
-# 在要共享的目录里启动（默认共享当前目录，端口 8001）
-node fileshare.js /path/to/share
-```
-
-首次启动会随机生成密码，打印在终端里，并保存到 `~/.config/fileshare/password`，之后重启密码不变。
-
-然后在浏览器打开 `http://服务器公网IP:8001`，用户名 `admin`，密码见上。查看本机公网 IP：`curl -s ifconfig.me`。
-
-### 后台运行
+## 长期运行
 
 ```bash
-nohup node fileshare.js /path/to/share > fileshare.log 2>&1 &
-pkill -f fileshare.js   # 停止
+nohup npx remote-fileshare /path/to/share > fileshare.log 2>&1 &
+pkill -f remote-fileshare   # 停止
 ```
 
-长期使用建议用 systemd 托管，开机自启、崩溃自动重启，示例见 [`contrib/fileshare.service`](contrib/fileshare.service)。
+更推荐用 systemd 托管，开机自启、崩溃自动重启，示例见 [`contrib/remote-fileshare.service`](contrib/remote-fileshare.service)。
 
-### 配置
+## 配置
 
 全部通过环境变量设置：
 
@@ -51,41 +81,41 @@ pkill -f fileshare.js   # 停止
 | `HOST` | `0.0.0.0` | 监听地址，只想本机访问可设为 `127.0.0.1` |
 | `FS_USER` | `admin` | 登录用户名 |
 | `PASS` | 随机生成 | 登录密码，设置后不再读写密码文件 |
-| `PASS_FILE` | `~/.config/fileshare/password` | 自动生成的密码保存位置；改密码可以直接编辑它后重启 |
+| `PASS_FILE` | `~/.config/remote-fileshare/password` | 自动生成的密码保存位置；改密码可以直接编辑它后重启 |
 | `TRUST_PROXY` | 不开启 | 放在本机反向代理后面时设为 `1`，从 `X-Forwarded-For` 读取真实客户端 IP（用于登录限流和日志） |
 
 ```bash
-PORT=9000 PASS='一个足够长的密码' node fileshare.js ~/share
+PORT=9000 PASS='一个足够长的密码' npx remote-fileshare ~/share
 ```
 
 ### HTTPS
 
-fileshare 本身只提供 HTTP，保持零依赖。需要 HTTPS 时，在前面放一个 [Caddy](https://caddyserver.com)，证书会自动申请和续期：
+remote-fileshare 本身只提供 HTTP，以保持零依赖。需要 HTTPS 时，在前面放一个 [Caddy](https://caddyserver.com)，证书会自动申请和续期：
 
 ```bash
-HOST=127.0.0.1 TRUST_PROXY=1 node fileshare.js /path/to/share   # 只监听本机，不直接暴露
+HOST=127.0.0.1 TRUST_PROXY=1 npx remote-fileshare /path/to/share   # 只监听本机，不直接暴露
 ```
 
-Caddy 配置见 [`contrib/Caddyfile`](contrib/Caddyfile)。有域名时只需要两行配置；**没有域名也可以**：Let's Encrypt 支持直接给公网 IP 签证书（需要 Caddy 2.10 以上版本），访问地址就是 `https://你的IP`。两种方式都需要放行 80 和 443 端口。
+Caddy 配置见 [`contrib/Caddyfile`](contrib/Caddyfile)。有域名时只需要两行配置。**没有域名也可以**：Let's Encrypt 支持直接给公网 IP 签证书（需要 Caddy 2.10 以上版本），访问地址就是 `https://你的IP`，也可以带端口，例如 `https://你的IP:8001`。两种方式都需要放行 80 端口，证书申请和续期要用它。
 
 ## 配合 AI agent 使用
 
 - **把文件交给 agent**：网页上传后，点该文件的「复制路径」（或页面上方的「复制当前目录路径」），把路径粘贴进对话，例如「帮我看看 /root/share/截图.png」。
-- **把 agent 的产出拿回来**：让 agent 把结果写到共享目录里，刷新网页即可下载；整个文件夹点「打包」。
+- **把 agent 的产出拿回来**：让 agent 把结果写到共享目录里，刷新网页点「下载」；整个文件夹点「打包下载」。
 - **让 agent 用命令行操作**（agent 在另一台机器上时）：
 
 ```bash
 U='admin:你的密码'; S='http://服务器IP:8001'
-curl -u "$U" -T report.pdf "$S/报告/report.pdf"        # 上传（自动创建目录）
-curl -u "$U" -o report.pdf "$S/报告/report.pdf"        # 下载
-curl -u "$U" -C - -o big.iso "$S/big.iso"               # 断点续传下载
-curl -u "$U" "$S/报告/?tar" | tar xz                    # 打包下载整个目录
+curl -u "$U" -T report.pdf "$S/报告/report.pdf"                           # 上传（自动创建目录）
+curl -u "$U" -o report.pdf "$S/报告/report.pdf"                           # 下载
+curl -u "$U" -C - -o big.iso "$S/big.iso"                                  # 断点续传下载
+curl -u "$U" "$S/报告/?tar" | tar xz                                       # 打包下载整个目录
 curl -u "$U" -X POST -G --data-urlencode "mkdir=新目录" "$S/"             # 新建目录
 curl -u "$U" -X POST -G --data-urlencode "rename=归档/a.txt" "$S/a.txt"   # 改名 / 移动
 curl -u "$U" -X DELETE "$S/a.txt"                                          # 删除
 ```
 
-路径里的中文可以原样写；`?` 后面的参数含中文时，Node 会直接拒绝请求，所以要像上面那样用 `-G --data-urlencode` 编码。
+路径里的中文可以原样写；`?` 后面的参数含中文时要像上面那样用 `-G --data-urlencode` 编码。
 
 ## HTTP 接口
 
@@ -113,15 +143,45 @@ curl -u "$U" -X DELETE "$S/a.txt"                                          # 删
 
 **传到一半断了？** 网页上传是逐个文件进行的，已经传完的文件不受影响，重新选择剩下的文件继续即可。下载中断可以用浏览器的「继续」或 `curl -C -` 续传。
 
-**怎么换密码？** 设置 `PASS` 环境变量，或者编辑 `~/.config/fileshare/password` 后重启服务。
+**怎么换密码？** 设置 `PASS` 环境变量，或者编辑 `~/.config/remote-fileshare/password` 后重启服务。
 
 ## 开发
 
-```bash
-npm test   # 在临时目录启动真实服务器跑端到端测试，无需安装任何依赖
+```
+remote-fileshare.js          Node 版（单文件，网页界面的唯一来源）
+src/remote_fileshare/        Python 版
+  server.py                  服务器实现
+  ui.py                      网页界面，由 scripts/sync-ui.js 从 Node 版生成，不要手动改
+test/fileshare.test.js       端到端测试，两个版本共用
 ```
 
-[`docs/PROMPT.md`](docs/PROMPT.md) 是这个项目最初的 Claude Code 提示词，可以用它让 AI 从零生成一个同类工具。
+```bash
+npm test                 # 测 Node 版
+npm run test:python      # 用同一套测试测 Python 版（需要 python3）
+npm run sync-ui          # 改了 remote-fileshare.js 里的网页界面后，同步到 Python 版
+```
+
+测试会在临时目录里启动真实的服务器逐项验证，并对比两个版本生成的页面必须完全一致。不需要安装任何依赖。
+
+[`docs/PROMPT.md`](docs/PROMPT.md) 是这个项目最初的 Claude Code 提示词。
+
+## English
+
+**remote-fileshare** moves files between your browser and a remote server. Run one command on the server, open the page, and upload, download and manage files. It is built for the AI-agent workflow, where you drive a remote (often overseas) server through Claude Code, Codex or opencode and need to hand files to the agent or bring its output back.
+
+```bash
+npx remote-fileshare /path/to/share     # Node.js 18+
+uvx remote-fileshare /path/to/share     # Python 3.8+
+```
+
+- Zero dependencies in both the Node.js and Python versions. They share one test suite and render identical pages.
+- Password-protected. A random password is generated on first run, and failed logins are rate-limited.
+- Upload files, whole folders or drag-and-drop, with progress, speed and ETA. There is no request timeout.
+- Download with resume support. Folders stream as `.tar.gz`. Images, PDFs, media and code can be previewed in a sandbox.
+- Copy any file's absolute server path in one click to paste to your agent.
+- HTTPS works by putting Caddy in front, even without a domain (Let's Encrypt IP certificates). See [`contrib/Caddyfile`](contrib/Caddyfile).
+
+The UI is in Chinese. Configuration uses the environment variables listed above.
 
 ## 许可证
 

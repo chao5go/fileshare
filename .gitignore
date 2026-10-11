@@ -2,3 +2,9 @@ node_modules/
 *.log
 .*.upload
 password
+__pycache__/
+*.pyc
+dist/
+*.egg-info/
+.venv/
+*.tgz

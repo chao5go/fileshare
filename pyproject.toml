@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "remote-fileshare"
+dynamic = ["version"]
+description = "远程文件共享：零依赖的网页文件共享服务器，在浏览器和远程服务器之间传文件，适合配合远程 AI agent 使用"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "chao5go" }]
+keywords = ["remote", "file-sharing", "file-server", "upload", "http-server", "zero-dependency", "self-hosted", "ai-agent"]
+classifiers = [
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: File Sharing",
+  "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+]
+
+[project.urls]
+Homepage = "https://github.com/chao5go/remote-fileshare"
+Issues = "https://github.com/chao5go/remote-fileshare/issues"
+
+[project.scripts]
+remote-fileshare = "remote_fileshare.server:main"
+
+[tool.hatch.version]
+path = "src/remote_fileshare/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/remote_fileshare"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/remote_fileshare", "README.md", "LICENSE"]

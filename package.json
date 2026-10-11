@@ -1,27 +1,39 @@
 {
-  "name": "fileshare",
-  "version": "1.0.0",
-  "description": "零依赖的单文件网页文件共享服务器：带密码、拖拽上传/下载、文件夹打包，适合配合远程 AI agent 传文件",
-  "main": "fileshare.js",
+  "name": "remote-fileshare",
+  "version": "1.1.0",
+  "description": "远程文件共享：零依赖、单文件的网页文件共享服务器，在浏览器和远程服务器之间传文件，适合配合远程 AI agent 使用",
+  "main": "remote-fileshare.js",
   "bin": {
-    "fileshare": "fileshare.js"
+    "remote-fileshare": "remote-fileshare.js"
   },
   "scripts": {
-    "start": "node fileshare.js",
-    "test": "node --test"
+    "start": "node remote-fileshare.js",
+    "test": "node --test",
+    "test:python": "FILESHARE_IMPL=python node --test",
+    "sync-ui": "node scripts/sync-ui.js"
   },
   "engines": {
     "node": ">=18"
   },
   "files": [
-    "fileshare.js"
+    "remote-fileshare.js"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chao5go/remote-fileshare.git"
+  },
+  "homepage": "https://github.com/chao5go/remote-fileshare#readme",
+  "bugs": "https://github.com/chao5go/remote-fileshare/issues",
   "keywords": [
+    "remote",
     "file-sharing",
+    "file-server",
     "upload",
     "http-server",
     "zero-dependency",
+    "self-hosted",
     "ai-agent"
   ],
+  "author": "chao5go",
   "license": "MIT"
 }
