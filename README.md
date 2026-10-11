@@ -1,7 +1,7 @@
 # remote-fileshare · 远程文件共享
 
-[![npm](https://img.shields.io/npm/v/remote-fileshare?logo=npm)](https://www.npmjs.com/package/remote-fileshare)
-[![PyPI](https://img.shields.io/pypi/v/remote-fileshare?logo=pypi&logoColor=white)](https://pypi.org/project/remote-fileshare/)
+[![npm](https://img.shields.io/npm/v/remote-fileshare?logo=npm&cacheSeconds=300)](https://www.npmjs.com/package/remote-fileshare)
+[![PyPI](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fremote-fileshare%2Fjson&query=%24.info.version&prefix=v&label=pypi&logo=pypi&logoColor=white&cacheSeconds=300)](https://pypi.org/project/remote-fileshare/)
 [![CI](https://github.com/chao5go/remote-fileshare/actions/workflows/ci.yml/badge.svg)](https://github.com/chao5go/remote-fileshare/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/chao5go/remote-fileshare/blob/main/LICENSE)
 
