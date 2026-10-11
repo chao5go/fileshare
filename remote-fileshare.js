@@ -13,7 +13,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
   console.log(`remote-fileshare ${VERSION} — 远程文件共享

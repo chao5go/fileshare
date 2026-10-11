@@ -5,9 +5,11 @@
 [![CI](https://github.com/chao5go/remote-fileshare/actions/workflows/ci.yml/badge.svg)](https://github.com/chao5go/remote-fileshare/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/chao5go/remote-fileshare/blob/main/LICENSE)
 
-**在浏览器和远程服务器之间传文件。** 一行命令在服务器上启动，打开网页就能上传、下载、管理文件。不用装 FTP，不用配 scp，也不用折腾 VS Code 插件。
+**把截图和文件发给远程 Linux 机器上的 AI agent。** 一行命令在服务器上启动，打开网页就能上传、下载、管理文件。不用装 FTP，不用配 scp，也不用折腾 VS Code 插件。
 
-适合这样的场景：你在本地电脑上通过 Claude Code、Codex、opencode 等 **AI agent** 远程操作一台服务器，需要把图片、文档、整个文件夹传给 agent 处理，或者把 agent 生成的结果拿回本地。
+适合这样的场景：你 SSH 到一台**远程 Linux 机器**，在上面用 **Claude Code、Codex CLI** 等 AI agent 写代码、完成任务。这时你想把本地电脑上的截图、设计稿、报错图片发给 agent 看，可终端里没法直接粘贴图片。
+
+用 remote-fileshare 在浏览器里把图片传到这台机器上，点「复制路径」，把路径粘贴给 agent 就行。agent 生成的文件、改好的代码，也能从网页直接下载回本地。
 
 > ⚠️ **特别提醒**：服务器在境外时，直接在 VS Code / 终端里拖拽上传大文件会很慢，还容易中断。传大文件、整个文件夹，建议用 remote-fileshare 的网页上传：浏览器直连服务器，带进度、速度和剩余时间，体验好很多。
 
@@ -116,11 +118,23 @@ HOST=127.0.0.1 TRUST_PROXY=1 npx remote-fileshare /path/to/share
 
 Caddy 配置见 [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile)。有域名时只需要两行配置。**没有域名也可以**：Let's Encrypt 支持直接给公网 IP 签证书（需要 Caddy 2.10 以上版本），访问地址就是 `https://你的IP`，也可以带端口，例如 `https://你的IP:8001`。两种方式都需要放行 80 端口，证书申请和续期要用它。
 
-## 配合 AI agent 使用
+## 配合 Claude Code / Codex CLI 使用
 
-- **把文件交给 agent**：网页上传后，点该文件的「复制路径」（或页面上方的「复制当前目录路径」），把路径粘贴进对话，例如「帮我看看 /root/share/截图.png」。
-- **把 agent 的产出拿回来**：让 agent 把结果写到共享目录里，刷新网页点「下载」；整个文件夹点「打包下载」。
-- **让 agent 用命令行操作**（agent 在另一台机器上时）：
+典型用法：在远程机器上开两个终端，一个跑 agent，一个跑 remote-fileshare。
+
+```bash
+cd ~/my-project
+npx remote-fileshare .        # 终端 1：共享项目目录
+claude                        # 终端 2：在同一个目录里用 Claude Code（或 codex）
+```
+
+- **发图片给 agent**：在本地浏览器打开网页，把截图拖进去，点「复制路径」，粘贴到对话里，例如「看一下 /root/my-project/截图.png，按这个设计改页面」。共享的就是项目目录时，直接说「看一下 截图.png」也行。
+- **拿回 agent 的产出**：agent 生成的文件、图片、报告就在共享目录里，刷新网页点「下载」；整个文件夹点「打包下载」。
+- **传大文件或整个文件夹**：网页上传有进度和速度显示，比在 VS Code 里拖拽快得多。
+
+### 用命令行传文件
+
+在其他机器上，也可以用 curl 操作：
 
 ```bash
 U='admin:你的密码'; S='http://服务器IP:8001'
@@ -194,7 +208,7 @@ git commit -am "Release 1.2.0" && git push
 
 ## English
 
-**remote-fileshare** moves files between your browser and a remote server. Run one command on the server, open the page, and upload, download and manage files. It is built for the AI-agent workflow, where you drive a remote (often overseas) server through Claude Code, Codex or opencode and need to hand files to the agent or bring its output back.
+**remote-fileshare** lets you send screenshots and files to AI coding agents such as Claude Code or Codex CLI when they run on a remote Linux machine you SSH into. A terminal can't take a pasted image, so you start remote-fileshare on the server, drag the image into the web page, copy its server path, and paste the path to the agent. Files the agent produces can be downloaded back the same way.
 
 ```bash
 npx remote-fileshare /path/to/share     # Node.js 18+
@@ -205,7 +219,7 @@ uvx remote-fileshare /path/to/share     # Python 3.8+
 - Password-protected. A random password is generated on first run, and failed logins are rate-limited.
 - Upload files, whole folders or drag-and-drop, with progress, speed and ETA. There is no request timeout.
 - Download with resume support. Folders stream as `.tar.gz`. Images, PDFs, media and code can be previewed in a sandbox.
-- Copy any file's absolute server path in one click to paste to your agent.
+- Copy any file's absolute server path in one click and paste it into Claude Code or Codex CLI.
 - `--https` detects the public IP and gets a Let's Encrypt IP certificate through Caddy, so no domain is needed. For a manual setup, see [`contrib/Caddyfile`](https://github.com/chao5go/remote-fileshare/blob/main/contrib/Caddyfile).
 
 The UI is in Chinese. Configuration uses the environment variables listed above.

@@ -1,7 +1,7 @@
 {
   "name": "remote-fileshare",
-  "version": "1.2.0",
-  "description": "Remote file sharing between your browser and a server: upload, download, preview, folder tar.gz, resumable. One command, zero dependencies, built for remote AI agents. 远程文件共享：一行 npx / uvx 启动，在浏览器和远程服务器之间上传、下载、预览、打包文件；带密码、断点续传、零依赖，专为远程 AI agent 设计",
+  "version": "1.2.1",
+  "description": "Send screenshots and files from your browser to Claude Code, Codex CLI and other AI agents running on a remote Linux server, and download what they produce. One command, password, HTTPS, zero dependencies. 远程文件共享：在远程 Linux 机器上用 Claude Code、Codex CLI 写代码时，从浏览器把截图、文件传给 AI agent，并把结果下载回本地；一行 npx / uvx 启动，带密码、HTTPS、零依赖",
   "main": "remote-fileshare.js",
   "bin": {
     "remote-fileshare": "remote-fileshare.js"
@@ -30,12 +30,13 @@
     "file-transfer",
     "file-server",
     "upload",
-    "download",
-    "http-server",
-    "zero-dependency",
-    "self-hosted",
+    "screenshot",
     "ai-agent",
     "claude-code",
+    "codex",
+    "ssh",
+    "zero-dependency",
+    "self-hosted",
     "npx",
     "uvx"
   ],
