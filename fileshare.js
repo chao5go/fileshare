@@ -23,7 +23,8 @@ if (process.argv.includes('-h') || process.argv.includes('--help')) {
   HOST      监听地址（默认 0.0.0.0）
   FS_USER   登录用户名（默认 admin）
   PASS      登录密码（不设置则首次运行随机生成，并保存到密码文件）
-  PASS_FILE 密码文件路径（默认 ~/.config/fileshare/password）`);
+  PASS_FILE 密码文件路径（默认 ~/.config/fileshare/password）
+  TRUST_PROXY=1  放在本机反向代理（Caddy/Nginx）后面时设置，从 X-Forwarded-For 读取真实客户端 IP`);
   process.exit(0);
 }
 if (process.argv.includes('-v') || process.argv.includes('--version')) { console.log(VERSION); process.exit(0); }
@@ -31,6 +32,7 @@ if (process.argv.includes('-v') || process.argv.includes('--version')) { console
 const USERNAME = process.env.FS_USER || 'admin';
 const PORT = Number(process.env.PORT) || 8001;
 const HOST = process.env.HOST || '0.0.0.0';
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const PASS_FILE = process.env.PASS_FILE || path.join(os.homedir(), '.config', 'fileshare', 'password');
 const ROOT = fs.realpathSync(path.resolve(process.argv.slice(2).find(a => !a.startsWith('-')) || '.'));
 
@@ -335,8 +337,15 @@ function receiveUpload(req, res, target) {
   req.pipe(out);
 }
 
+// 反向代理后面所有请求都来自本机，必须取代理追加的 X-Forwarded-For 最后一项，否则登录限流会把所有人一起锁住。
+// 只信任来自本机的代理，防止外部直接伪造这个头。
 function clientIp(req) {
-  return req.socket.remoteAddress || '-';
+  const remote = req.socket.remoteAddress || '-';
+  if (TRUST_PROXY && /^(127\.|::1$|::ffff:127\.)/.test(remote)) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map(v => v.trim()).filter(Boolean).pop();
+    if (forwarded) return forwarded;
+  }
+  return remote;
 }
 
 function log(req, message) {

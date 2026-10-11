@@ -153,3 +153,21 @@ test('连续登录失败后锁定', async () => {
   for (let i = 0; i < 10; i++) await fetch(base + '/', { headers: { authorization: bad } });
   assert.equal((await req('/')).status, 429);
 });
+
+test('TRUST_PROXY：按 X-Forwarded-For 区分客户端限流', async () => {
+  const port = await freePort();
+  const proxied = spawn(process.execPath, [path.join(__dirname, '..', 'fileshare.js'), root], {
+    env: { ...process.env, PASS, PORT: String(port), HOST: '127.0.0.1', TRUST_PROXY: '1' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  try {
+    await new Promise(resolve => proxied.stdout.on('data', d => { if (String(d).includes('已启动')) resolve(); }));
+    const url = `http://127.0.0.1:${port}/`;
+    const bad = 'Basic ' + Buffer.from('admin:wrong').toString('base64');
+    for (let i = 0; i < 10; i++) await fetch(url, { headers: { authorization: bad, 'x-forwarded-for': '203.0.113.9' } });
+    assert.equal((await fetch(url, { headers: { authorization: auth, 'x-forwarded-for': '203.0.113.9' } })).status, 429);
+    assert.equal((await fetch(url, { headers: { authorization: auth, 'x-forwarded-for': '198.51.100.7' } })).status, 200);
+  } finally {
+    proxied.kill();
+  }
+});

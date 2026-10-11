@@ -1,0 +1,21 @@
+# 用 Caddy 给 fileshare 加 HTTPS（证书自动申请、自动续期）。
+# 1. 安装 Caddy 2.10 以上版本：https://caddyserver.com/docs/install
+# 2. fileshare 只监听本机：HOST=127.0.0.1 TRUST_PROXY=1 node fileshare.js /path/to/share
+# 3. 把本文件放到 /etc/caddy/Caddyfile，改成你的域名或 IP，然后 systemctl reload caddy
+# 需要放行 TCP 80（申请证书用）和 443。
+
+# 有域名时（域名的 A 记录指向服务器）：
+# share.example.com {
+# 	reverse_proxy 127.0.0.1:8001
+# }
+
+# 没有域名，直接用公网 IP（Let's Encrypt 的 IP 证书有效期约 6 天，Caddy 会自动续期）：
+203.0.113.10 {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+		}
+	}
+	reverse_proxy 127.0.0.1:8001
+}
