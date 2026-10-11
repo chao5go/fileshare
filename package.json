@@ -1,0 +1,27 @@
+{
+  "name": "fileshare",
+  "version": "1.0.0",
+  "description": "零依赖的单文件网页文件共享服务器：带密码、拖拽上传/下载、文件夹打包，适合配合远程 AI agent 传文件",
+  "main": "fileshare.js",
+  "bin": {
+    "fileshare": "fileshare.js"
+  },
+  "scripts": {
+    "start": "node fileshare.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "fileshare.js"
+  ],
+  "keywords": [
+    "file-sharing",
+    "upload",
+    "http-server",
+    "zero-dependency",
+    "ai-agent"
+  ],
+  "license": "MIT"
+}
