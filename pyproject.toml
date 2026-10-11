@@ -5,26 +5,32 @@ build-backend = "hatchling.build"
 [project]
 name = "remote-fileshare"
 dynamic = ["version"]
-description = "远程文件共享：零依赖的网页文件共享服务器，在浏览器和远程服务器之间传文件，适合配合远程 AI agent 使用"
+description = "Remote file sharing between your browser and a server: upload, download, preview, folder tar.gz, resumable. One command, zero dependencies, built for remote AI agents. 远程文件共享：一行 npx / uvx 启动，在浏览器和远程服务器之间上传、下载、预览、打包文件；带密码、断点续传、零依赖，专为远程 AI agent 设计"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "chao5go" }]
-keywords = ["remote", "file-sharing", "file-server", "upload", "http-server", "zero-dependency", "self-hosted", "ai-agent"]
+keywords = ["remote", "file-sharing", "file-transfer", "file-server", "upload", "download", "http-server", "zero-dependency", "self-hosted", "ai-agent", "claude-code", "npx", "uvx"]
 classifiers = [
   "Environment :: Web Environment",
   "Intended Audience :: Developers",
   "Intended Audience :: System Administrators",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Communications :: File Sharing",
   "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
 ]
 
 [project.urls]
 Homepage = "https://github.com/chao5go/remote-fileshare"
+Documentation = "https://github.com/chao5go/remote-fileshare#readme"
 Issues = "https://github.com/chao5go/remote-fileshare/issues"
+Changelog = "https://github.com/chao5go/remote-fileshare/releases"
+npm = "https://www.npmjs.com/package/remote-fileshare"
 
 [project.scripts]
 remote-fileshare = "remote_fileshare.server:main"

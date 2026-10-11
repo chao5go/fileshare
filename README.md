@@ -26,7 +26,7 @@ pipx run remote-fileshare /path/to/share   # Python 3.8+，用 pipx
 不传目录时共享当前目录，默认端口 8001。启动后终端会打印访问地址、用户名和密码：
 
 ```
-remote-fileshare 1.1.0 已启动：http://0.0.0.0:8001
+remote-fileshare 1.1.1 已启动：http://0.0.0.0:8001
 访问地址：http://127.0.0.1:8001
 访问地址：http://10.0.0.5:8001
 共享目录：/path/to/share
